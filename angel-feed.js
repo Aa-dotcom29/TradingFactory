@@ -45,8 +45,8 @@ function makeTotp(secret, at = Date.now()) {
 function classifyPriceOi(priceChange, oiChange) {
   if (priceChange == null || oiChange == null) return 'FIRST SAMPLE';
   if (priceChange === 0 && oiChange === 0) return 'NO CHANGE';
-  if (oiChange === 0) return 'PRICE MOVED · OI FLAT';
-  if (priceChange === 0) return 'OI CHANGED · PRICE FLAT';
+  if (oiChange === 0) return 'PRICE MOVED Â· OI FLAT';
+  if (priceChange === 0) return 'OI CHANGED Â· PRICE FLAT';
   if (oiChange > 0) return priceChange > 0 ? 'LONG BUILDUP' : 'SHORT BUILDUP';
   return priceChange > 0 ? 'SHORT COVERING' : 'LONG UNWINDING';
 }
@@ -61,7 +61,7 @@ function networkIdentity() {
 
 async function publicIp() {
   const response = await fetch('https://api.ipify.org', { signal: AbortSignal.timeout(5000) });
-  if (!response.ok) throw new Error('Unable to determine this computer’s public IP for SmartAPI login.');
+  if (!response.ok) throw new Error('Unable to determine this computerâ€™s public IP for SmartAPI login.');
   const ip = (await response.text()).trim();
   if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) throw new Error('Public IP lookup returned an invalid address.');
   return ip;
@@ -89,6 +89,7 @@ class AngelMarketFeed {
     this.onTick = onTick;
     this.onStatus = onStatus;
     this.onOptionChain = onOptionChain;
+    this.credentials = null;
     this.socket = null;
     this.heartbeat = null;
     this.reconnect = null;
@@ -106,16 +107,28 @@ class AngelMarketFeed {
   }
 
   configured() {
-    return ['ANGEL_CLIENT_ID', 'ANGEL_API_KEY', 'ANGEL_PASSWORD', 'ANGEL_TOTP_SECRET'].every(key => Boolean(process.env[key]));
+    return this.credentials ? ['clientId', 'apiKey', 'password', 'totpSecret'].every(key => Boolean(this.credentials[key])) : ['ANGEL_CLIENT_ID', 'ANGEL_API_KEY', 'ANGEL_PASSWORD', 'ANGEL_TOTP_SECRET'].every(key => Boolean(process.env[key]));
+  }
+
+  setCredentials(credentials) {
+    this.disconnect();
+    this.credentials = credentials;
+    this.lastError = null;
+  }
+
+  value(key) {
+    if (this.credentials) return this.credentials[key];
+    const names = { clientId: 'ANGEL_CLIENT_ID', apiKey: 'ANGEL_API_KEY', password: 'ANGEL_PASSWORD', totpSecret: 'ANGEL_TOTP_SECRET' };
+    return process.env[names[key]];
   }
 
   status() {
-    if (!this.configured()) return { state: 'NOT_CONFIGURED', detail: 'Add Angel One SmartAPI credentials to the ignored local .env file.' };
+    if (!this.configured()) return { state: 'NOT_CONFIGURED', detail: 'Add Angel One SmartAPI credentials once in the hosting providerâ€™s protected environment variables.' };
     if (this.lastError) return { state: 'ERROR', detail: this.lastError, lastTickAt: this.lastTickAt };
     if (this.stopped && !this.socket) return { state: 'DISCONNECTED', detail: 'Read-only provider is not connected.' };
     if (this.lastTickAt && Date.now() - Date.parse(this.lastTickAt) > 45000) return { state: 'STALE', detail: 'No Angel One index tick received in the last 45 seconds.', lastTickAt: this.lastTickAt };
-    if (this.socket?.readyState === WebSocket.OPEN && this.lastTickAt) return { state: 'LIVE', detail: 'Angel One WebSocket connected · index ticks received.', lastTickAt: this.lastTickAt };
-    if (this.socket?.readyState === WebSocket.OPEN) return { state: 'CONNECTING', detail: 'Socket open · waiting for first market tick.' };
+    if (this.socket?.readyState === WebSocket.OPEN && this.lastTickAt) return { state: 'LIVE', detail: 'Angel One WebSocket connected Â· index ticks received.', lastTickAt: this.lastTickAt };
+    if (this.socket?.readyState === WebSocket.OPEN) return { state: 'CONNECTING', detail: 'Socket open Â· waiting for first market tick.' };
     return { state: 'CONNECTING', detail: 'Authenticating and resolving index instruments.' };
   }
 
@@ -127,10 +140,10 @@ class AngelMarketFeed {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json', Accept: 'application/json',
-        'X-UserType': 'USER', 'X-SourceID': 'WEB', 'X-PrivateKey': process.env.ANGEL_API_KEY,
+        'X-UserType': 'USER', 'X-SourceID': 'WEB', 'X-PrivateKey': this.value('apiKey'),
         'X-ClientLocalIP': identity.local, 'X-ClientPublicIP': ip, 'X-MACAddress': identity.mac,
       },
-      body: JSON.stringify({ clientcode: process.env.ANGEL_CLIENT_ID, password: process.env.ANGEL_PASSWORD, totp: makeTotp(process.env.ANGEL_TOTP_SECRET) }),
+      body: JSON.stringify({ clientcode: this.value('clientId'), password: this.value('password'), totp: makeTotp(this.value('totpSecret')) }),
     });
     this.accessToken = result.data?.jwtToken;
     this.feedToken = result.data?.feedToken;
@@ -138,7 +151,7 @@ class AngelMarketFeed {
   }
 
   async connect() {
-    if (!this.configured()) throw new Error('Angel One credentials are incomplete. Configure all four ANGEL_* values in the local .env file, then restart the server.');
+    if (!this.configured()) throw new Error('Angel One credentials are not configured. Add the four SmartAPI values in Railway Variables; the service will connect automatically after it restarts.');
     this.disconnect();
     this.stopped = false;
     this.lastError = null;
@@ -146,7 +159,7 @@ class AngelMarketFeed {
     try {
       await this.login();
       const masterResponse = await fetch(SCRIP_MASTER, { signal: AbortSignal.timeout(20000) });
-      if (!masterResponse.ok) throw new Error('Could not download Angel One’s instrument master.');
+      if (!masterResponse.ok) throw new Error('Could not download Angel Oneâ€™s instrument master.');
       this.instruments = await masterResponse.json();
       this.contracts = resolveIndexTokens(this.instruments);
       await this.seedIndexCloses();
@@ -167,7 +180,7 @@ class AngelMarketFeed {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json', Accept: 'application/json',
-        'X-UserType': 'USER', 'X-SourceID': 'WEB', 'X-PrivateKey': process.env.ANGEL_API_KEY,
+        'X-UserType': 'USER', 'X-SourceID': 'WEB', 'X-PrivateKey': this.value('apiKey'),
         Authorization: `Bearer ${this.accessToken}`,
         'X-ClientLocalIP': identity.local, 'X-ClientPublicIP': this.clientPublicIp, 'X-MACAddress': identity.mac,
       },
@@ -213,7 +226,7 @@ class AngelMarketFeed {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json', Accept: 'application/json',
-        'X-UserType': 'USER', 'X-SourceID': 'WEB', 'X-PrivateKey': process.env.ANGEL_API_KEY,
+        'X-UserType': 'USER', 'X-SourceID': 'WEB', 'X-PrivateKey': this.value('apiKey'),
         Authorization: `Bearer ${this.accessToken}`,
         'X-ClientLocalIP': identity.local, 'X-ClientPublicIP': this.clientPublicIp, 'X-MACAddress': identity.mac,
       },
@@ -251,9 +264,9 @@ class AngelMarketFeed {
     return new Promise((resolve, reject) => {
       const socket = new WebSocket('wss://smartapisocket.angelone.in/smart-stream', {
         headers: {
-          'x-client-code': process.env.ANGEL_CLIENT_ID,
+          'x-client-code': this.value('clientId'),
           Authorization: this.accessToken,
-          'x-api-key': process.env.ANGEL_API_KEY,
+          'x-api-key': this.value('apiKey'),
           'x-feed-token': this.feedToken,
         },
         handshakeTimeout: 10000,
@@ -311,3 +324,4 @@ class AngelMarketFeed {
 }
 
 module.exports = { AngelMarketFeed, makeTotp, classifyPriceOi, nseDerivativesSession };
+

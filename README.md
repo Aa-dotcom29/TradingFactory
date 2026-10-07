@@ -40,26 +40,26 @@ Manual background operations are also exposed as authenticated server endpoints.
 
 ### Browser deployment on Railway
 
-This app needs a persistent Node service because it owns the Angel One WebSocket, scheduler, and market-history writes. `Dockerfile` and `railway.json` configure that runtime and an unauthenticated `/healthz` probe. Keep one replica for the single-workspace JSON journal. Attach a Railway volume at `/data` and set `DATA_DIR=/data`; otherwise local history is not durable across replacement deployments. Set `NODE_ENV=production`, a private `APP_PASSWORD`, and a unique `SESSION_SECRET` in Railway service Variables. Add the four `ANGEL_*` values there only if you want the cloud instance to connect to Angel One; never commit `.env` or broker credentials. Set `SCHEDULER_ENABLED=true`. Railway supplies `PORT` automatically. The user must deploy this new app separately from the legacy AlphaScope Railway project.
+This app needs a persistent Node service because it owns the Angel One WebSocket, scheduler, and market-history writes. `Dockerfile` and `railway.json` configure that runtime and an unauthenticated `/healthz` probe. Keep one replica for the single-workspace JSON journal. Attach a Railway volume at `/data` and set `DATA_DIR=/data`; otherwise local history is not durable across replacement deployments. Set `NODE_ENV=production`, a private `APP_PASSWORD`, and a unique `SESSION_SECRET` in Railway service Variables. For real data, set `ANGEL_CLIENT_ID`, `ANGEL_API_KEY`, `ANGEL_PASSWORD`, and `ANGEL_TOTP_SECRET` there as protected variables. Production disables mock market quotes, mock options, seeded news, and simulated signal/trade data. The server automatically logs in at startup and retries the read-only feed with backoff; users do not click a daily Connect button. Keep one replica and never commit `.env` or broker credentials. Set `SCHEDULER_ENABLED=true`. Railway supplies `PORT` automatically.
 
 ### Angel One read-only market feed
 
-The app includes an opt-in, server-side SmartAPI login and WebSocket feed for NIFTY 50, BANK NIFTY, and MIDCAP NIFTY index quotes. It also polls Angel One's FULL quote endpoint every 10 seconds for the nearest NIFTY index-option expiry and 11 strikes around ATM, showing call/put premiums, volume, and open interest. OI change is calculated only between this app's consecutive snapshots; it is not the exchange's day change. The option snapshot is not a streaming feed. Max pain, IV/Greeks, and validated signal rules are not provided by this integration. To configure it, copy `.env.example` to `.env`, fill `ANGEL_CLIENT_ID`, `ANGEL_API_KEY`, `ANGEL_PASSWORD` (your SmartAPI login PIN/password), and `ANGEL_TOTP_SECRET` (base32 secret, not a one-time code), restart the server, sign in, and use **Connect Angel One read-only feed**. The secret values remain server-side; never paste them into the UI or chat.
+The app includes a server-side SmartAPI login and WebSocket feed for NIFTY 50, BANK NIFTY, and MIDCAP NIFTY index quotes. It also polls Angel One's FULL quote endpoint every 10 seconds for the nearest NIFTY index-option expiry and 11 strikes around ATM, showing call/put premiums, volume, and open interest. OI change is calculated only between this app's consecutive snapshots; it is not the exchange's day change. The option snapshot is not a streaming feed. Max pain, IV/Greeks, and validated signal rules are not provided by this integration. Configure the four `ANGEL_*` values once as protected Railway service variables: client ID, API key, SmartAPI login PIN/password, and the base32 TOTP secret (not a six-digit one-time code). The server then generates a fresh TOTP and reconnects automatically at startup or when the session/feed expires. Never paste credentials into the UI or chat. Credentials must be renewed if you rotate them or Angel One invalidates them.
 
-The option endpoint is polled every 10 seconds during the scheduled NSE index-derivatives session (weekdays, 09:15–15:40 IST); polling and history writes are skipped outside that window. The UI distinguishes a fresh in-session response from a stale, pre-market, post-market, weekend, or mock snapshot. The schedule check does not load exchange holidays, so a weekday holiday is detected through missing/stale provider ticks rather than a holiday calendar. Each in-session batch is written as a timestamped historical observation: to `data/market-snapshots.ndjson` in local mode, or to the existing `market_snapshots` table when PostgreSQL is configured. The OI page shows saved records, supports paging to older samples, and reports the last 90 days; local records are append-only. Signal publication remains paused even after complete quote snapshots because strategy calculations and risk rules have not been calibrated and validated against historical broker data. News and theta/position monitoring remain mock or unavailable. Synthetic position marks are paused after an Angel One feed starts. No broker orders are placed. Live-feed behavior requires an Angel One account/API key and can only be fully verified against that account's credentials during an open market session.
+The option endpoint is polled every 10 seconds during the scheduled NSE index-derivatives session (weekdays, 09:15â€“15:40 IST); polling and history writes are skipped outside that window. The UI distinguishes a fresh in-session response from a stale, pre-market, post-market, weekend, or mock snapshot. The schedule check does not load exchange holidays, so a weekday holiday is detected through missing/stale provider ticks rather than a holiday calendar. Each in-session batch is written as a timestamped historical observation: to `data/market-snapshots.ndjson` in local mode, or to the existing `market_snapshots` table when PostgreSQL is configured. The OI page shows saved records, supports paging to older samples, and reports the last 90 days; local records are append-only. Signal publication remains paused even after complete quote snapshots because strategy calculations and risk rules have not been calibrated and validated against historical broker data. News and theta/position monitoring remain mock or unavailable. Synthetic position marks are paused after an Angel One feed starts. No broker orders are placed. Live-feed behavior requires an Angel One account/API key and can only be fully verified against that account's credentials during an open market session.
 
 The official Node SDK is intentionally not used; the app connects with a small WebSocket adapter. Keep `ws` updated and run the dependency audit when deploying.
 
 ## Useful endpoints
 
-- `GET /api/status` — reports whether the current browser session is authenticated.
-- `POST /api/login` — `{ "password": "..." }`.
-- `POST /api/logout` — clears the session cookie.
-- `GET /api/state` — dashboard state; requires login.
-- `POST /api/scan` — reevaluates the mock strategy scores; requires login.
-- `POST /api/publish` — `{ "strategy": "OI Options" }` or `Institutional Scanner`; requires login.
-- `POST /api/monitor` — advances paper trades; requires login.
-- `GET /api/health` — basic runtime/storage configuration check.
+- `GET /api/status` â€” reports whether the current browser session is authenticated.
+- `POST /api/login` â€” `{ "password": "..." }`.
+- `POST /api/logout` â€” clears the session cookie.
+- `GET /api/state` â€” dashboard state; requires login.
+- `POST /api/scan` â€” reevaluates the mock strategy scores; requires login.
+- `POST /api/publish` â€” `{ "strategy": "OI Options" }` or `Institutional Scanner`; requires login.
+- `POST /api/monitor` â€” advances paper trades; requires login.
+- `GET /api/health` â€” basic runtime/storage configuration check.
 
 ## Supabase setup
 
@@ -80,3 +80,4 @@ Supabase currently defaults new public tables to not being exposed through its D
 - PostgreSQL driver and lockfile verified; live database connection test requires a configured project `DATABASE_URL`.
 
 This is a runnable MVP, not the complete production trading platform described in the referenced specification. Real data quality, calibrated strategy math, multi-user authorization, production-grade scheduler supervision, historical retention policy, chart/PDF export, and broker/news/Telegram adapters still need implementation before production or trading use.
+
