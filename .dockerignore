@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+.git
+.logs
+.npm-cache
+data
+node_modules
+work
