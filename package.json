@@ -1,18 +1,17 @@
 {
-  "name": "trading-facrory",
-  "version": "0.1.0",
+  "name": "trading-facrory-intelligence",
+  "version": "1.0.0",
   "private": true,
-  "description": "Paper-first Indian market trading intelligence workspace",
+  "description": "Source-grounded market intelligence workspace with no trading or order execution",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js && node --check angel-feed.js && node --check public/app.js"
+    "check": "node --check server.js && node --check public/app.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "postgres": "3.4.9",
-    "ws": "8.22.0"
+    "pdf-parse": "1.1.1"
   }
 }
