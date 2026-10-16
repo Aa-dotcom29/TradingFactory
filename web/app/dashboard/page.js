@@ -1,9 +1,11 @@
-import { getHealth, getNews, getFlow, getEntityFeatures, getFlowFeatures, getBiasOverview } from '@/lib/queries';
+import { getHealth, getNews, getFlow, getEntityFeatures, getFlowFeatures, getBiasOverview, getSignalStageOverview, getSignalCandidates } from '@/lib/queries';
 import NewsList from '@/components/NewsList';
 import FlowPanel, { FlowUnderlyings } from '@/components/FlowPanel';
 import EntityIntel from '@/components/EntityIntel';
 import FlowFeatures from '@/components/FlowFeatures';
 import BiasPanel from '@/components/BiasPanel';
+import SignalStages from '@/components/SignalStages';
+import SignalCandidates from '@/components/SignalCandidates';
 import HealthTable from '@/components/HealthTable';
 
 export const dynamic = 'force-dynamic';
@@ -11,16 +13,19 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Overview - Trading Factory' };
 
 export default async function OverviewPage() {
-  const [health, news, flow, entityData, flowFeatures, bias] = await Promise.all([
+  const [health, news, flow, entityData, flowFeatures, bias, lifecycle, candidates] = await Promise.all([
     getHealth(),
     getNews(12),
     getFlow(10),
     getEntityFeatures(8),
     getFlowFeatures(10),
     getBiasOverview(6),
+    getSignalStageOverview(6),
+    getSignalCandidates(null, 4),
   ]);
   const counts = health.counts || {};
   const biasCounts = bias.counts || {};
+  const stageCounts = lifecycle.counts || {};
 
   return (
     <div className="stack">
@@ -47,8 +52,8 @@ export default async function OverviewPage() {
           <div className="v mono">{counts.flow_24h ?? '-'}</div>
         </div>
         <div className="stat">
-          <div className="k">Signals</div>
-          <div className="v mono">{counts.signals_total ?? 0}</div>
+          <div className="k">READY stages</div>
+          <div className="v mono">{counts.stages_ready ?? 0}</div>
         </div>
         <div className="stat">
           <div className="k">Entities tracked</div>
@@ -62,6 +67,10 @@ export default async function OverviewPage() {
             <span className="tone-down">{biasCounts.BEARISH || 0}</span>
           </div>
         </div>
+        <div className="stat">
+          <div className="k">Candidates pending</div>
+          <div className="v mono">{counts.candidates_pending ?? 0}</div>
+        </div>
       </div>
 
       <section className="card">
@@ -71,6 +80,19 @@ export default async function OverviewPage() {
           once the evidence clears the confidence floor.
         </p>
         <BiasPanel rows={bias.rows} showHorizon />
+      </section>
+
+      <section className="card">
+        <h2>Signal lifecycle</h2>
+        <p className="hint">
+          Where each name sits in its trade lifecycle (READY {stageCounts.READY || 0} /
+          BUILDING {stageCounts.BUILDING || 0} / WATCH {stageCounts.WATCH || 0}). A candidate is
+          raised only at READY; it still has to pass the risk gate before it is published.
+        </p>
+        <SignalStages rows={lifecycle.rows} showHorizon />
+        <div className="hr" />
+        <p className="hint">Most recent trade candidates awaiting the risk gate.</p>
+        <SignalCandidates candidates={candidates} showHorizon />
       </section>
 
       <div className="grid cols-2">

@@ -85,7 +85,7 @@ class BiasWorker {
       const rows = await sql`
         select version, config
         from config_registry
-        where status = 'approved'
+        where status = 'approved' and family = 'bias'
         order by approved_at desc nulls last, created_at desc
         limit 1
       `;
@@ -94,8 +94,8 @@ class BiasWorker {
       } else {
         const version = DEFAULT_BIAS_CONFIG.version;
         await sql`
-          insert into config_registry (version, created_by, status, metrics, config, approved_at)
-          values (${version}, 'harness', 'approved', ${sql.json({ seeded: true })},
+          insert into config_registry (version, family, created_by, status, metrics, config, approved_at)
+          values (${version}, 'bias', 'harness', 'approved', ${sql.json({ seeded: true })},
                   ${sql.json(DEFAULT_BIAS_CONFIG)}, now())
           on conflict (version) do nothing
         `;

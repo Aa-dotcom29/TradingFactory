@@ -226,6 +226,69 @@ create table if not exists outcomes (
 );
 create index if not exists outcomes_signal_idx on outcomes (signal_id);
 
+-- ---------------------------------------------------------------------------
+-- Signal lifecycle (Slice 4) - the staged state machine fed by the bias meter.
+--
+-- A signal is not a single event: a setup appears, builds, becomes tradeable, and later exits.
+-- `signal_stages` is an append-only log of those transitions (the current stage for a symbol
+-- and horizon is its latest row), so the dashboard can show "what is forming" continuously and
+-- the history explains why a candidate was raised. `signal_candidates` holds the concrete
+-- tradeable proposals W4 hands to the risk gate (W5); it is deliberately separate from
+-- `signals`, which only ever holds risk-approved, published trades.
+-- ---------------------------------------------------------------------------
+create table if not exists signal_stages (
+  id             uuid not null default gen_random_uuid(),
+  as_of          timestamptz not null,
+  symbol         text not null,
+  horizon        text not null check (horizon in ('INTRADAY','SWING','POSITIONAL')),
+  stage          text not null check (stage in ('IDLE','WATCH','BUILDING','READY','BLOCKED','ACTIVE','EXITED','EXPIRED')),
+  previous_stage text,
+  direction      text not null check (direction in ('BULLISH','NEUTRAL','BEARISH')),
+  score          numeric,
+  confidence     numeric,
+  plan_ready     boolean not null default false,
+  liquidity_ok   boolean not null default false,
+  plan           jsonb,
+  plan_signature text,
+  reasons        jsonb not null default '[]'::jsonb,
+  config_version text not null,
+  engine_version text not null,
+  primary key (id, as_of)
+) partition by range (as_of);
+create index if not exists signal_stages_lookup_idx on signal_stages (horizon, symbol, as_of desc);
+
+create table if not exists signal_candidates (
+  id               uuid primary key default gen_random_uuid(),
+  created_at       timestamptz not null default now(),
+  as_of            timestamptz not null,
+  horizon          text not null check (horizon in ('INTRADAY','SWING','POSITIONAL')),
+  symbol           text not null,
+  direction        text not null check (direction in ('BULLISH','BEARISH')),
+  strategy         text not null,
+  strategy_version text not null,
+  engine_version   text not null,
+  config_version   text,
+  kind             text not null default 'OPTION' check (kind in ('OPTION','SPOT')),
+  instrument       text,
+  strike           numeric,
+  option_type      text check (option_type in ('CE','PE',NULL)),
+  expiry           text,
+  entry            numeric,
+  target           numeric,
+  stop             numeric,
+  rr               numeric,
+  confidence       numeric,
+  score            numeric,
+  liquidity_ok     boolean not null default false,
+  status           text not null default 'pending_risk'
+                     check (status in ('pending_risk','approved','rejected','superseded')),
+  dedupe_key       text not null unique,
+  setup            jsonb not null default '{}'::jsonb,
+  reasons          jsonb not null default '[]'::jsonb
+);
+create index if not exists signal_candidates_status_idx on signal_candidates (status, created_at desc);
+create index if not exists signal_candidates_horizon_idx on signal_candidates (horizon, created_at desc);
+
 -- governance: candidate configs produced by the learning loop, human-approved
 create table if not exists config_registry (
   version     text primary key,
@@ -237,6 +300,13 @@ create table if not exists config_registry (
   approved_by uuid,
   approved_at timestamptz
 );
+
+-- Config versions belong to a family ("bias", "signal", ...). Without this, "the latest approved
+-- config" would be ambiguous once more than one stage registers a baseline, and one stage could
+-- silently load another stage's weights. Existing rows are the bias meter's, hence the default.
+alter table config_registry add column if not exists family text not null default 'bias';
+create index if not exists config_registry_family_idx
+  on config_registry (family, status, approved_at desc nulls last, created_at desc);
 
 -- ---------------------------------------------------------------------------
 -- Plain-SQL queue (replaces a broker; portable; FOR UPDATE SKIP LOCKED)
@@ -305,7 +375,7 @@ declare
   start_month date;
   part_name   text;
 begin
-  foreach parent in array array['market_snapshots','oi_spurts','news_items','features','bias_verdicts'] loop
+  foreach parent in array array['market_snapshots','oi_spurts','news_items','features','bias_verdicts','signal_stages'] loop
     for i in 0..months_ahead loop
       start_month := (date_trunc('month', now()) + (i || ' month')::interval)::date;
       part_name := format('%s_%s', parent, to_char(start_month, 'YYYYMM'));
@@ -325,6 +395,8 @@ insert into schema_migrations (version) values ('0001_harness_backbone')
 insert into schema_migrations (version) values ('0002_slice1_auth')
   on conflict (version) do nothing;
 insert into schema_migrations (version) values ('0003_slice3_bias')
+  on conflict (version) do nothing;
+insert into schema_migrations (version) values ('0004_slice4_signals')
   on conflict (version) do nothing;
 
 commit;

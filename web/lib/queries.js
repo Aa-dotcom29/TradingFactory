@@ -19,7 +19,12 @@ export async function getHealth() {
         (select count(*)::int from news_items) as news_total,
         (select count(*)::int from oi_spurts where captured_at > now() - interval '24 hours') as flow_24h,
         (select count(*)::int from signals) as signals_total,
-        (select count(*)::int from signals where published_at > now() - interval '24 hours') as signals_24h
+        (select count(*)::int from signals where published_at > now() - interval '24 hours') as signals_24h,
+        (select count(*)::int from signal_candidates where status = 'pending_risk') as candidates_pending,
+        (select count(*)::int from (
+          select distinct on (horizon, symbol) horizon, symbol, stage from signal_stages
+          order by horizon, symbol, as_of desc
+        ) s where s.stage = 'READY') as stages_ready
     `;
     return { configured: true, sources, counts: rows[0] || null, error: null };
   } catch (error) {
@@ -211,5 +216,88 @@ export async function getBiasOverview(limit = 6) {
     return { rows: rows.slice(0, limit), counts, asOf };
   } catch {
     return empty;
+  }
+}
+
+// Slice 4: the current lifecycle stage per symbol for one horizon. READY first, then BUILDING
+// and WATCH, because that is the order a human wants to read them in.
+export async function getSignalStages(horizon, limit = 12) {
+  const sql = db();
+  if (!sql) return [];
+  try {
+    return await sql`
+      select * from (
+        select distinct on (symbol)
+          symbol, horizon, stage, previous_stage, direction, score, confidence,
+          plan_ready, liquidity_ok, plan, reasons, as_of
+        from signal_stages
+        where horizon = ${horizon}
+        order by symbol, as_of desc
+      ) t
+      order by case stage when 'READY' then 0 when 'BUILDING' then 1 when 'WATCH' then 2
+                          when 'ACTIVE' then 3 when 'BLOCKED' then 4 else 5 end,
+               abs(score) desc, symbol asc
+      limit ${limit}
+    `;
+  } catch {
+    return [];
+  }
+}
+
+// Slice 4: the lifecycle across every horizon, with stage counts for the overview. Counts cover
+// every (horizon, symbol) pair, not just the rows returned for display.
+export async function getSignalStageOverview(limit = 8) {
+  const empty = { rows: [], counts: { READY: 0, BUILDING: 0, WATCH: 0, IDLE: 0 }, asOf: null };
+  const sql = db();
+  if (!sql) return empty;
+  try {
+    const rows = await sql`
+      select * from (
+        select distinct on (horizon, symbol)
+          symbol, horizon, stage, previous_stage, direction, score, confidence, as_of, reasons
+        from signal_stages
+        order by horizon, symbol, as_of desc
+      ) t
+      order by case stage when 'READY' then 0 when 'BUILDING' then 1 when 'WATCH' then 2
+                          when 'ACTIVE' then 3 when 'BLOCKED' then 4 else 5 end,
+               abs(score) desc, symbol asc
+    `;
+    const counts = { READY: 0, BUILDING: 0, WATCH: 0, IDLE: 0 };
+    let asOf = null;
+    for (const row of rows) {
+      counts[row.stage] = (counts[row.stage] || 0) + 1;
+      if (!asOf || row.as_of > asOf) asOf = row.as_of;
+    }
+    return { rows: rows.slice(0, limit), counts, asOf };
+  } catch {
+    return empty;
+  }
+}
+
+// Slice 4: concrete tradeable proposals W4 raised for the risk gate. Nothing here is published
+// yet - a candidate only becomes a real signal once W5 passes it and W6 delivers it.
+export async function getSignalCandidates(horizon = null, limit = 10) {
+  const sql = db();
+  if (!sql) return [];
+  try {
+    if (horizon) {
+      return await sql`
+        select id, as_of, horizon, symbol, direction, kind, instrument, strike, option_type,
+               expiry, entry, target, stop, rr, confidence, score, liquidity_ok, status, reasons
+        from signal_candidates
+        where horizon = ${horizon}
+        order by created_at desc
+        limit ${limit}
+      `;
+    }
+    return await sql`
+      select id, as_of, horizon, symbol, direction, kind, instrument, strike, option_type,
+             expiry, entry, target, stop, rr, confidence, score, liquidity_ok, status, reasons
+      from signal_candidates
+      order by created_at desc
+      limit ${limit}
+    `;
+  } catch {
+    return [];
   }
 }

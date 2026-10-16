@@ -5,8 +5,9 @@ export default function SignalList({ signals = [], horizonLabel = 'this horizon'
     return (
       <div className="empty">
         <strong>No published signals for {horizonLabel}</strong>
-        Signals are published by the risk-gated engine (Slices 4-5). Until then this stays
-        intentionally empty rather than showing placeholder trades.
+        The signal builder raises candidates (see above), but nothing is published until the
+        non-bypassable risk gate and the publisher exist. This stays intentionally empty rather
+        than showing placeholder trades.
       </div>
     );
   }

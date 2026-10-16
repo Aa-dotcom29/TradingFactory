@@ -19,6 +19,13 @@ const toNumber = (value) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
 };
+// Like toNumber but keeps "missing" distinct from zero, which matters for a price: a premium
+// of 0 is not the same as an unquoted contract.
+const nullableNumber = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+};
 const round = (value, digits = 3) => (Number.isFinite(value) ? +value.toFixed(digits) : 0);
 
 // Accepts a Date (postgres driver), an ISO string or an epoch number.
@@ -193,6 +200,7 @@ function emptyFlowBucket(symbol) {
     contractCount: 0,
     underlyingOiChange: 0,
     underlyingVolume: 0,
+    underlyingPrice: null,
     underlyingRead: null,
     hasUnderlying: false,
     contracts: [],
@@ -231,6 +239,10 @@ function computeFlowFeatures(rows, options = {}) {
       agg.underlyingOiChange += oiChange;
       agg.underlyingVolume += volume;
       if (!agg.underlyingRead && read) agg.underlyingRead = read;
+      // The underlying value is the spot/futures reference the signal builder anchors a
+      // strike against when no broker quote is available.
+      const underlyingPrice = nullableNumber(field(row, 'price', 'price'));
+      if (underlyingPrice !== null) agg.underlyingPrice = underlyingPrice;
       continue;
     }
 
@@ -264,7 +276,11 @@ function computeFlowFeatures(rows, options = {}) {
         strike: Number.isFinite(strikeNumber) ? strikeNumber : null,
         expiry: field(row, 'expiry', 'expiry') || null,
         oiChange,
+        oi: nullableNumber(field(row, 'oi', 'oi')),
         volume,
+        // Traded premium, kept so the signal builder can price a candidate contract from the
+        // same factual snapshot instead of reaching for the raw tape.
+        price: nullableNumber(field(row, 'price', 'price')),
         read: read || null,
       });
     }
@@ -296,6 +312,7 @@ function computeFlowFeatures(rows, options = {}) {
         contractCount: agg.contractCount,
         underlyingOiChange: agg.underlyingOiChange,
         underlyingVolume: agg.underlyingVolume,
+        underlyingPrice: agg.underlyingPrice,
         underlyingRead: agg.underlyingRead,
         topContracts: agg.contracts
           .slice()

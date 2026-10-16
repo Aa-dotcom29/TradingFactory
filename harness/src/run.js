@@ -9,6 +9,8 @@
 //   w0            - ingest only
 //   w1            - news scoring + entity features
 //   w2            - flow features
+//   w3            - bias meter
+//   w4            - signal builder (lifecycle + candidates)
 //   w8            - supervisor
 // Splitting roles lets a busy worker scale out later without changing the code.
 
@@ -19,9 +21,10 @@ const { IngestWorker } = require('./workers/w0-ingest');
 const { NewsWorker } = require('./workers/w1-news');
 const { FlowWorker } = require('./workers/w2-flow');
 const { BiasWorker } = require('./workers/w3-bias');
+const { SignalWorker } = require('./workers/w4-signals');
 const { Supervisor } = require('./workers/w8-supervisor');
 
-const ROLES = ['all', 'w0', 'w1', 'w2', 'w3', 'w8'];
+const ROLES = ['all', 'w0', 'w1', 'w2', 'w3', 'w4', 'w8'];
 
 function parseArgs(argv) {
   const flags = { once: false, dry: false, role: null };
@@ -38,6 +41,7 @@ function parseArgs(argv) {
 const ACTIVITY_KEYS = [
   'processed', 'duplicates', 'failed', 'entities', 'items', 'symbols',
   'quotes', 'rows', 'queued', 'purged', 'purgedStale', 'persisted', 'emitted',
+  'candidates', 'superseded', 'stages',
 ];
 
 function idleTick(result) {
@@ -100,6 +104,7 @@ async function main() {
   const news = has('w1') ? new NewsWorker() : null;
   const flowWorker = has('w2') ? new FlowWorker() : null;
   const bias = has('w3') ? new BiasWorker() : null;
+  const signals = has('w4') ? new SignalWorker() : null;
   const supervisor = has('w8') ? new Supervisor() : null;
 
   const timers = [];
@@ -118,6 +123,7 @@ async function main() {
     if (news) log.info('news result', await news.runOnce());
     if (flowWorker) log.info('flow result', await flowWorker.runOnce());
     if (bias) log.info('bias result', await bias.runOnce({ force: true }));
+    if (signals) log.info('signal result', await signals.runOnce({ force: true }));
     if (supervisor) {
       await supervisor.heartbeat();
       await supervisor.housekeeping();
@@ -144,6 +150,10 @@ async function main() {
   if (bias) {
     await bias.runOnce({ force: true });
     timers.push(setInterval(makeGuard('bias-worker', () => bias.runOnce()), config.poll.scoreMs));
+  }
+  if (signals) {
+    await signals.runOnce({ force: true });
+    timers.push(setInterval(makeGuard('signal-worker', () => signals.runOnce()), config.poll.scoreMs));
   }
   if (supervisor) {
     await supervisor.heartbeat();

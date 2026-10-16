@@ -28,8 +28,8 @@ Sources                      Harness worker (always-on)                    Chann
 -------                      --------------------------                    --------
 Angel One REST (quotes,      W0 ingest -> Postgres + queue
   greeks, instrument master)   |                +--> W1 news / W2 flow (Slice 2)
-NSE (OI spurts, option         |                +--> W3 bias (Slice 3) / later: W4..W7
-  chain; cookie-primed)        v
+NSE (OI spurts, option         |                +--> W3 bias (Slice 3) -> W4 signals (Slice 4)
+  chain; cookie-primed)        |                +--> later: W5..W7
 RSS feeds (ET, BS, MC,       W8 supervisor (health, queue, freshness)
   Google News)
                              Postgres: partitioned time-series + queue + signals
@@ -82,6 +82,11 @@ Workers and what they own:
   Without those, backtests and self-learning are meaningless.
 - `config_registry` stores candidate configs from the learning loop; only a human approval
   moves one to `approved`. Nothing is auto-promoted.
+- Config rows carry a `family` (`bias`, `signal`, ...). Each worker resolves "the latest approved
+  config" **within its own family**, so one stage can never load another stage's weights.
+- `signal_stages` is an append-only lifecycle log (partitioned monthly); the current stage for a
+  symbol and horizon is its latest row. `signal_candidates` holds proposals awaiting the risk
+  gate and is separate from `signals`, which only ever holds published trades.
 
 ## Rule engine (Slice 2)
 
@@ -103,7 +108,7 @@ Both functions are pure (no network, no DB, no LLM), so a signal can always be e
 stored inputs and replayed offline. Neither emits a direction: turning these features into a
 verdict is W3's job.
 
-## Worker responsibilities (Slice 2 and Slice 3 as built)
+## Worker responsibilities (Slice 2 through Slice 4 as built)
 
 | Worker | Consumes | Produces |
 |---|---|---|
@@ -111,10 +116,11 @@ verdict is W3's job.
 | W1 news | `news.raw` | `news_items` (persisted), `news_seen` (permanent dedupe), `features` set `news.entity.v1`; enqueues `news.scored` |
 | W2 flow | `flow.snapshot` | `features` set `flow.v1`; enqueues `feature.snapshot` |
 | W3 bias | `news.scored`, `feature.snapshot` (triggers only) | `bias_verdicts`; enqueues `bias.verdict` |
+| W4 signals | `bias.verdict` (triggers only) | `signal_stages`, `signal_candidates`; enqueues `signal.candidate` |
 | W8 supervisor | (read-only) | `sources_health` heartbeat, queue housekeeping |
 
 A work queue is not pub/sub, so the topics above are consumed by exactly one stage each: W2
-takes `flow.snapshot`, W3 takes `feature.snapshot`.
+takes `flow.snapshot`, W3 takes `feature.snapshot`, W4 takes `bias.verdict`.
 
 ## Bias meter (Slice 3)
 
@@ -138,6 +144,31 @@ takes `flow.snapshot`, W3 takes `feature.snapshot`.
 
 W2's remaining job - correlating news against OI and price - lands with the signal builder
 (W4), where there is an actual entry to correlate against.
+
+## Signal builder (Slice 4)
+
+`signals.js` turns a verdict into a plan and a lifecycle position:
+
+- Each symbol and horizon runs a small state machine: `IDLE -> WATCH -> BUILDING -> READY`.
+  `READY` means a concrete, **liquid** trade exists - not merely a high score. `WATCH` means a
+  directional lean that cannot yet be traded (no price to anchor a strike, or below the
+  liquidity floor), and records why.
+- A plan is an option trade (ATM strike nearest spot, entry at the premium, percentage stop,
+  target = stop distance x reward multiple) or a level plan on the underlying when no option
+  contract can be anchored.
+- Transitions are appended to `signal_stages` on a material change only (stage, direction, plan
+  signature, score move or staleness), so 24/7 operation does not append an identical row every
+  minute. `signal_candidates` holds the proposals raised at `READY`; leaving `READY` supersedes
+  any candidate still awaiting risk.
+- `BLOCKED/ACTIVE/EXITED/EXPIRED` belong to W5/W6/W7. W4 never overwrites them, so a live
+  position cannot be silently reset.
+- Config lives in `config_registry` under the `signal` family (`signal-v1`), versioned and
+  human-supersedeable, exactly like the bias meter's.
+
+**Known limitation:** the NSE OI-spurt feed reports unusual OI moves, not an option chain, so it
+surfaces outlier strikes rather than the at-the-money ones. Until a chain feature set is wired in
+(NSE `option-chain-*` or Angel `optionGreek`), most plans are the honest underlying level plan.
+The fix only needs a better candidate list in `selectContract`.
 
 ## Optional LLM
 

@@ -11,9 +11,13 @@ const { TOPICS } = require('./topics');
 const { toNewsItem, dedupeHash, resolveEntities, scoreSentiment, classifySeverity } = require('./normalize');
 const { aggregateNewsEntities, computeFlowFeatures } = require('./intel');
 const { combineVerdict, newsSignal, flowSignal, priceSignal, resolveConfig } = require('./bias');
+const {
+  buildPlan, computeStage, resolveSignalConfig, DEFAULT_SIGNAL_CONFIG,
+} = require('./signals');
 const { NewsWorker } = require('./workers/w1-news');
 const { FlowWorker } = require('./workers/w2-flow');
 const { BiasWorker } = require('./workers/w3-bias');
+const { SignalWorker } = require('./workers/w4-signals');
 const rss = require('./sources/rss');
 
 const checks = [];
@@ -115,6 +119,54 @@ async function pureFunctionChecks() {
   record(
     'slice 3 worker wiring',
     typeof BiasWorker === 'function' && TOPICS.BIAS === 'bias.verdict' && biasConfig.version === 'bias-v1',
+  );
+
+  const signalConfig = resolveSignalConfig(null);
+  const flowFeature = {
+    underlyingPrice: 25000,
+    underlyingVolume: 900000,
+    optionCount: 6,
+    topContracts: [
+      { kind: 'OPTION', optionType: 'CE', strike: 25000, expiry: '27OCT2026', price: 120, oi: 20000, volume: 5000 },
+      { kind: 'OPTION', optionType: 'PE', strike: 25000, expiry: '27OCT2026', price: 110, oi: 18000, volume: 4000 },
+    ],
+  };
+  const built = buildPlan({
+    symbol: 'NIFTY',
+    horizon: 'INTRADAY',
+    direction: 'BULLISH',
+    flow: flowFeature,
+    quote: null,
+    config: signalConfig,
+  });
+  const ready = computeStage({
+    verdict: { direction: 'BULLISH', score: 0.5, confidence: 0.6 },
+    plan: built.plan,
+    planReason: built.reason,
+    config: signalConfig,
+  });
+  record(
+    'slice 4 plan + lifecycle',
+    built.ok && built.plan.kind === 'OPTION' && built.plan.optionType === 'CE' && ready.stage === 'READY',
+    `stage=${ready.stage} entry=${built.plan ? built.plan.entry : 'n/a'} stop=${built.plan ? built.plan.stop : 'n/a'}`,
+  );
+
+  const withheldStage = computeStage({
+    verdict: { direction: 'NEUTRAL', score: 0, confidence: 0 },
+    plan: built.plan,
+    config: signalConfig,
+  });
+  record(
+    'slice 4 withholds READY without a directional verdict',
+    withheldStage.stage === 'IDLE',
+    `stage=${withheldStage.stage}`,
+  );
+
+  record(
+    'slice 4 worker wiring',
+    typeof SignalWorker === 'function'
+      && TOPICS.SIGNAL_CANDIDATE === 'signal.candidate'
+      && DEFAULT_SIGNAL_CONFIG.version === 'signal-v1',
   );
 }
 

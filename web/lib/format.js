@@ -123,3 +123,23 @@ export function scoreTone(value) {
   if (n <= -0.1) return 'down';
   return 'muted';
 }
+
+// Slice 4 lifecycle stage. Only READY is a call to act; BUILDING is "forming" and WATCH is
+// "we see it but cannot trade it yet", so they must not look alike.
+export function stageTone(stage) {
+  const v = String(stage || '').toUpperCase();
+  if (v === 'READY') return 'up';
+  if (v === 'BUILDING') return 'warn';
+  if (v === 'ACTIVE') return 'accent';
+  if (v === 'BLOCKED') return 'down';
+  if (v === 'EXITED' || v === 'EXPIRED') return 'muted';
+  return 'muted';
+}
+
+export function candidateStatusTone(status) {
+  const v = String(status || '').toUpperCase();
+  if (v === 'APPROVED') return 'up';
+  if (v === 'REJECTED') return 'down';
+  if (v === 'SUPERSEDED') return 'muted';
+  return 'warn';
+}

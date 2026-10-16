@@ -62,7 +62,7 @@ const config = {
   env: process.env.NODE_ENV || 'development',
   dryRun: bool(process.env.HARNESS_DRY_RUN, false),
   once: bool(process.env.HARNESS_ONCE, false),
-  role: process.env.HARNESS_ROLE || 'all', // all | w0 | w1 | w2 | w8
+  role: process.env.HARNESS_ROLE || 'all', // all | w0 | w1 | w2 | w3 | w4 | w8
   workerName: process.env.HARNESS_WORKER_NAME || `harness-${process.pid}`,
 
   database: {

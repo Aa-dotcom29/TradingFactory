@@ -11,6 +11,8 @@ import {
   severityTone,
   directionTone,
   scoreTone,
+  stageTone,
+  candidateStatusTone,
   istStamp,
   timeAgo,
 } from '../lib/format.js';
@@ -63,6 +65,21 @@ test('sentiment, severity and direction tones', () => {
   assert.equal(scoreTone(0.02), 'muted');
   assert.equal(scoreTone(-0.02), 'muted');
   assert.equal(scoreTone(null), 'muted');
+});
+
+test('stage and candidate tones keep READY distinct from "forming"', () => {
+  assert.equal(stageTone('READY'), 'up');
+  assert.equal(stageTone('BUILDING'), 'warn');
+  assert.equal(stageTone('WATCH'), 'muted');
+  assert.equal(stageTone('ACTIVE'), 'accent');
+  assert.equal(stageTone('BLOCKED'), 'down');
+  assert.equal(stageTone('EXITED'), 'muted');
+  assert.equal(stageTone(undefined), 'muted');
+
+  assert.equal(candidateStatusTone('pending_risk'), 'warn');
+  assert.equal(candidateStatusTone('approved'), 'up');
+  assert.equal(candidateStatusTone('rejected'), 'down');
+  assert.equal(candidateStatusTone('superseded'), 'muted');
 });
 
 test('istStamp renders in Asia/Kolkata, not local time', () => {

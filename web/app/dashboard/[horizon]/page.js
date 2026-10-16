@@ -1,7 +1,12 @@
 import { notFound } from 'next/navigation';
-import { getSignals, getFlow, getNews, getEntityFeatures, getFlowFeatures, getBias } from '@/lib/queries';
+import {
+  getSignals, getFlow, getNews, getEntityFeatures, getFlowFeatures, getBias,
+  getSignalStages, getSignalCandidates,
+} from '@/lib/queries';
 import { horizonByKey } from '@/lib/horizons';
 import SignalList from '@/components/SignalList';
+import SignalStages from '@/components/SignalStages';
+import SignalCandidates from '@/components/SignalCandidates';
 import FlowPanel, { FlowUnderlyings } from '@/components/FlowPanel';
 import EntityIntel from '@/components/EntityIntel';
 import FlowFeatures from '@/components/FlowFeatures';
@@ -21,13 +26,15 @@ export default async function HorizonPage({ params }) {
   const horizon = horizonByKey(raw);
   if (!horizon) notFound();
 
-  const [signals, flow, news, entityData, flowFeatures, bias] = await Promise.all([
+  const [signals, flow, news, entityData, flowFeatures, bias, stages, candidates] = await Promise.all([
     getSignals(horizon.key),
     getFlow(horizon.key === 'POSITIONAL' ? 12 : 20),
     getNews(20),
     getEntityFeatures(8),
     getFlowFeatures(10),
     getBias(horizon.key, 12),
+    getSignalStages(horizon.key, 12),
+    getSignalCandidates(horizon.key, 10),
   ]);
 
   return (
@@ -58,8 +65,24 @@ export default async function HorizonPage({ params }) {
       </section>
 
       <section className="card">
-        <h2>Signals</h2>
-        <p className="hint">Risk-gated, versioned signals for this horizon.</p>
+        <h2>Signal lifecycle</h2>
+        <p className="hint">
+          Each name moves through IDLE -&gt; WATCH -&gt; BUILDING -&gt; READY as evidence and
+          liquidity allow. READY means there is a complete, liquid plan; the reasons column
+          records why a name is where it is.
+        </p>
+        <SignalStages rows={stages} />
+        <div className="hr" />
+        <p className="hint">
+          Trade candidates raised at READY. These await the non-bypassable risk gate before
+          anything is published.
+        </p>
+        <SignalCandidates candidates={candidates} />
+      </section>
+
+      <section className="card">
+        <h2>Published signals</h2>
+        <p className="hint">Risk-gated, versioned signals delivered to the household.</p>
         <SignalList signals={signals} horizonLabel={horizon.label.toLowerCase()} />
       </section>
 
