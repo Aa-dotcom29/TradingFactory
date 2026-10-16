@@ -81,3 +81,9 @@ Supabase currently defaults new public tables to not being exposed through its D
 
 This is a runnable MVP, not the complete production trading platform described in the referenced specification. Real data quality, calibrated strategy math, multi-user authorization, production-grade scheduler supervision, historical retention policy, chart/PDF export, and broker/news/Telegram adapters still need implementation before production or trading use.
 
+## Market intelligence harness (Slice 0)
+
+A separate, staged autonomous pipeline is being built alongside this MVP under [`harness/`](./harness) (see [`docs/harness-architecture.md`](./docs/harness-architecture.md)). Slice 0 provides the backbone: a portable Postgres schema with monthly partitions, a 90-day retention floor and immutable/versioned signals; a dependency-free SQL queue; the W0 ingestion worker (Angel One batched quotes + option greeks, NSE OI-spurts volume flow, RSS news with rule-based entity/sentiment/severity scoring); and the W8 supervisor.
+
+It is free/self-hosted first: run `docker compose up -d --build` on any always-on host (for example an Oracle Cloud Always Free VM) or use the `render.yaml` blueprint. Useful commands: `npm run harness:selfcheck`, `npm run harness:test`, `npm run harness:schema`, `npm run harness`. Credentials stay server-side; the rule engine is authoritative and any LLM enrichment is optional.
+

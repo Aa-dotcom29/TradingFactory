@@ -1,0 +1,54 @@
+# Render blueprint for the harness.
+#
+# NOTE: Render background workers are a PAID plan (free web services also spin down after
+# ~15 minutes idle, which would break a 24/7 feed). If you want zero cost, run the same
+# Docker image on an always-on host such as an Oracle Cloud "Always Free" ARM VM using
+# docker-compose.yml instead. This file is provided because you already have Render access.
+#
+# Render managed Postgres free instances expire after 30 days; for anything long-lived use a
+# self-hosted Postgres (the VM path) or a paid Render database.
+
+databases:
+  - name: trading-factory-db
+    databaseName: tradingfactory
+    user: tf
+    plan: free
+
+services:
+  - type: worker
+    name: trading-factory-harness
+    runtime: docker
+    dockerfilePath: ./harness/Dockerfile
+    dockerContext: .
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: trading-factory-db
+          property: connectionString
+      - key: NODE_ENV
+        value: production
+      - key: HARNESS_ROLE
+        value: all
+      - key: HARNESS_MARKET_INTERVAL_MS
+        value: "10000"
+      - key: HARNESS_FLOW_INTERVAL_MS
+        value: "60000"
+      - key: HARNESS_NEWS_INTERVAL_MS
+        value: "300000"
+      - key: HARNESS_NSE_ENABLED
+        value: "true"
+      - key: HARNESS_INDEX_UNIVERSE
+        value: NIFTY 50,BANK NIFTY,MIDCAP NIFTY
+      - key: HARNESS_EQUITY_UNIVERSE
+        value: RELIANCE,TCS,HDFCBANK
+      # Secrets: set these in the Render dashboard, never in the repo.
+      - key: ANGEL_CLIENT_ID
+        sync: false
+      - key: ANGEL_API_KEY
+        sync: false
+      - key: ANGEL_PASSWORD
+        sync: false
+      - key: ANGEL_TOTP_SECRET
+        sync: false

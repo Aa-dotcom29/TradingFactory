@@ -1,0 +1,57 @@
+# Trading Factory harness - free/self-hosted stack.
+# Runs on any always-on host (Oracle Cloud Always Free ARM VM, Render, a VPS, or locally).
+# No commercial managed services required: Postgres + the Node worker, nothing else.
+#
+#   docker compose up -d --build
+#   docker compose logs -f worker
+#
+# Credentials come from a .env file next to this file (see .env.example). Never commit it.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tf}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tf_local_password}
+      POSTGRES_DB: ${POSTGRES_DB:-tradingfactory}
+    volumes:
+      - tf-db:/var/lib/postgresql/data
+      # Applied automatically on first boot of an empty volume.
+      - ./harness/db/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tf} -d ${POSTGRES_DB:-tradingfactory}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  worker:
+    build:
+      context: .
+      dockerfile: harness/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-tf}:${POSTGRES_PASSWORD:-tf_local_password}@db:5432/${POSTGRES_DB:-tradingfactory}
+      DATABASE_SSL: "false"
+      HARNESS_ROLE: ${HARNESS_ROLE:-all}
+      HARNESS_DRY_RUN: ${HARNESS_DRY_RUN:-false}
+      HARNESS_MARKET_INTERVAL_MS: ${HARNESS_MARKET_INTERVAL_MS:-10000}
+      HARNESS_FLOW_INTERVAL_MS: ${HARNESS_FLOW_INTERVAL_MS:-60000}
+      HARNESS_NEWS_INTERVAL_MS: ${HARNESS_NEWS_INTERVAL_MS:-300000}
+      HARNESS_NSE_ENABLED: ${HARNESS_NSE_ENABLED:-true}
+      HARNESS_RSS_FEEDS: ${HARNESS_RSS_FEEDS:-}
+      HARNESS_INDEX_UNIVERSE: ${HARNESS_INDEX_UNIVERSE:-NIFTY 50,BANK NIFTY,MIDCAP NIFTY}
+      HARNESS_EQUITY_UNIVERSE: ${HARNESS_EQUITY_UNIVERSE:-RELIANCE,TCS,HDFCBANK}
+      ANGEL_CLIENT_ID: ${ANGEL_CLIENT_ID:-}
+      ANGEL_API_KEY: ${ANGEL_API_KEY:-}
+      ANGEL_PASSWORD: ${ANGEL_PASSWORD:-}
+      ANGEL_TOTP_SECRET: ${ANGEL_TOTP_SECRET:-}
+
+volumes:
+  tf-db:

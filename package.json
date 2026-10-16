@@ -6,7 +6,13 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js && node --check angel-feed.js && node --check public/app.js"
+    "check": "node --check server.js && node --check angel-feed.js && node --check public/app.js",
+    "harness": "node harness/src/run.js",
+    "harness:once": "node harness/src/run.js --once",
+    "harness:daily": "node harness/src/run.js --once --dry",
+    "harness:selfcheck": "node harness/src/selfcheck.js",
+    "harness:schema": "node harness/scripts/apply-schema.js",
+    "harness:test": "node --test \"harness/test/*.test.js\""
   },
   "engines": {
     "node": ">=20"
