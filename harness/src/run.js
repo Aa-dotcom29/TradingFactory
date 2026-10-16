@@ -18,9 +18,10 @@ const db = require('./db');
 const { IngestWorker } = require('./workers/w0-ingest');
 const { NewsWorker } = require('./workers/w1-news');
 const { FlowWorker } = require('./workers/w2-flow');
+const { BiasWorker } = require('./workers/w3-bias');
 const { Supervisor } = require('./workers/w8-supervisor');
 
-const ROLES = ['all', 'w0', 'w1', 'w2', 'w8'];
+const ROLES = ['all', 'w0', 'w1', 'w2', 'w3', 'w8'];
 
 function parseArgs(argv) {
   const flags = { once: false, dry: false, role: null };
@@ -36,7 +37,7 @@ function parseArgs(argv) {
 // interesting cycles in a 24/7 run, so empty ticks drop to debug level.
 const ACTIVITY_KEYS = [
   'processed', 'duplicates', 'failed', 'entities', 'items', 'symbols',
-  'quotes', 'rows', 'queued', 'purged', 'purgedStale',
+  'quotes', 'rows', 'queued', 'purged', 'purgedStale', 'persisted', 'emitted',
 ];
 
 function idleTick(result) {
@@ -98,6 +99,7 @@ async function main() {
   const ingest = has('w0') ? new IngestWorker() : null;
   const news = has('w1') ? new NewsWorker() : null;
   const flowWorker = has('w2') ? new FlowWorker() : null;
+  const bias = has('w3') ? new BiasWorker() : null;
   const supervisor = has('w8') ? new Supervisor() : null;
 
   const timers = [];
@@ -111,10 +113,11 @@ async function main() {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
   if (config.once) {
-    // Ordered pipeline: W0 produces the messages W1/W2 consume, so drain after ingest.
+    // Ordered pipeline: each stage produces what the next one consumes.
     if (ingest) log.info('ingest result', await ingest.runAll());
     if (news) log.info('news result', await news.runOnce());
     if (flowWorker) log.info('flow result', await flowWorker.runOnce());
+    if (bias) log.info('bias result', await bias.runOnce({ force: true }));
     if (supervisor) {
       await supervisor.heartbeat();
       await supervisor.housekeeping();
@@ -137,6 +140,10 @@ async function main() {
   if (flowWorker) {
     await flowWorker.runOnce();
     timers.push(setInterval(makeGuard('flow-worker', () => flowWorker.runOnce()), config.poll.scoreMs));
+  }
+  if (bias) {
+    await bias.runOnce({ force: true });
+    timers.push(setInterval(makeGuard('bias-worker', () => bias.runOnce()), config.poll.scoreMs));
   }
   if (supervisor) {
     await supervisor.heartbeat();

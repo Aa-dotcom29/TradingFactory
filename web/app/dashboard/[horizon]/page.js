@@ -1,10 +1,11 @@
 import { notFound } from 'next/navigation';
-import { getSignals, getFlow, getNews, getEntityFeatures, getFlowFeatures } from '@/lib/queries';
+import { getSignals, getFlow, getNews, getEntityFeatures, getFlowFeatures, getBias } from '@/lib/queries';
 import { horizonByKey } from '@/lib/horizons';
 import SignalList from '@/components/SignalList';
 import FlowPanel, { FlowUnderlyings } from '@/components/FlowPanel';
 import EntityIntel from '@/components/EntityIntel';
 import FlowFeatures from '@/components/FlowFeatures';
+import BiasPanel from '@/components/BiasPanel';
 import NewsList from '@/components/NewsList';
 
 export const dynamic = 'force-dynamic';
@@ -20,12 +21,13 @@ export default async function HorizonPage({ params }) {
   const horizon = horizonByKey(raw);
   if (!horizon) notFound();
 
-  const [signals, flow, news, entityData, flowFeatures] = await Promise.all([
+  const [signals, flow, news, entityData, flowFeatures, bias] = await Promise.all([
     getSignals(horizon.key),
     getFlow(horizon.key === 'POSITIONAL' ? 12 : 20),
     getNews(20),
     getEntityFeatures(8),
     getFlowFeatures(10),
+    getBias(horizon.key, 12),
   ]);
 
   return (
@@ -44,6 +46,16 @@ export default async function HorizonPage({ params }) {
           Risk profile: {horizon.risk}. Manual execution only.
         </p>
       </div>
+
+      <section className="card">
+        <h2>Bias meter</h2>
+        <p className="hint">
+          {horizon.label}-horizon verdict per tracked symbol, strongest first. Score and
+          confidence come from the bias worker; a direction is only called above the confidence
+          floor.
+        </p>
+        <BiasPanel rows={bias} />
+      </section>
 
       <section className="card">
         <h2>Signals</h2>

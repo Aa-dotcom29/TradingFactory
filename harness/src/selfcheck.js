@@ -10,8 +10,10 @@ const queue = require('./queue');
 const { TOPICS } = require('./topics');
 const { toNewsItem, dedupeHash, resolveEntities, scoreSentiment, classifySeverity } = require('./normalize');
 const { aggregateNewsEntities, computeFlowFeatures } = require('./intel');
+const { combineVerdict, newsSignal, flowSignal, priceSignal, resolveConfig } = require('./bias');
 const { NewsWorker } = require('./workers/w1-news');
 const { FlowWorker } = require('./workers/w2-flow');
+const { BiasWorker } = require('./workers/w3-bias');
 const rss = require('./sources/rss');
 
 const checks = [];
@@ -74,6 +76,45 @@ async function pureFunctionChecks() {
     'slice 2 worker wiring',
     typeof NewsWorker === 'function' && typeof FlowWorker === 'function'
       && TOPICS.NEWS_SCORED === 'news.scored' && TOPICS.FEATURE_SNAPSHOT === 'feature.snapshot',
+  );
+
+  const biasConfig = resolveConfig(null);
+  const verdict = combineVerdict({
+    symbol: 'NIFTY',
+    horizon: 'INTRADAY',
+    signals: {
+      news: newsSignal({ pressure: 0.5, itemCount: 5, maxSeverity: 'MEDIUM', netSentiment: 0.5 }, biasConfig),
+      flow: flowSignal({ longBuildup: 10, shortBuildup: 1, shortCovering: 1, longUnwinding: 0, ceOiChange: 100, peOiChange: 200, optionCount: 12 }, biasConfig),
+      price: priceSignal({ ltp: 1010, close: 1000, high: 1012, low: 998 }, biasConfig),
+    },
+    config: biasConfig,
+  });
+  record(
+    'bias verdict combination',
+    verdict.direction === 'BULLISH' && verdict.confidence >= biasConfig.thresholds.minConfidence
+      && verdict.coverage === 1 && verdict.evidence.length >= 3,
+    `${verdict.direction} score=${verdict.score} confidence=${verdict.confidence}`,
+  );
+
+  const withheld = combineVerdict({
+    symbol: 'NIFTY',
+    horizon: 'POSITIONAL',
+    signals: {
+      news: newsSignal(null, biasConfig),
+      flow: flowSignal(null, biasConfig),
+      price: priceSignal(null, biasConfig),
+    },
+    config: biasConfig,
+  });
+  record(
+    'bias withholds a direction without evidence',
+    withheld.direction === 'NEUTRAL' && withheld.confidence === 0,
+    `direction=${withheld.direction} confidence=${withheld.confidence}`,
+  );
+
+  record(
+    'slice 3 worker wiring',
+    typeof BiasWorker === 'function' && TOPICS.BIAS === 'bias.verdict' && biasConfig.version === 'bias-v1',
   );
 }
 

@@ -1,8 +1,9 @@
-import { getHealth, getNews, getFlow, getEntityFeatures, getFlowFeatures } from '@/lib/queries';
+import { getHealth, getNews, getFlow, getEntityFeatures, getFlowFeatures, getBiasOverview } from '@/lib/queries';
 import NewsList from '@/components/NewsList';
 import FlowPanel, { FlowUnderlyings } from '@/components/FlowPanel';
 import EntityIntel from '@/components/EntityIntel';
 import FlowFeatures from '@/components/FlowFeatures';
+import BiasPanel from '@/components/BiasPanel';
 import HealthTable from '@/components/HealthTable';
 
 export const dynamic = 'force-dynamic';
@@ -10,14 +11,16 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Overview - Trading Factory' };
 
 export default async function OverviewPage() {
-  const [health, news, flow, entityData, flowFeatures] = await Promise.all([
+  const [health, news, flow, entityData, flowFeatures, bias] = await Promise.all([
     getHealth(),
     getNews(12),
     getFlow(10),
     getEntityFeatures(8),
     getFlowFeatures(10),
+    getBiasOverview(6),
   ]);
   const counts = health.counts || {};
+  const biasCounts = bias.counts || {};
 
   return (
     <div className="stack">
@@ -51,7 +54,24 @@ export default async function OverviewPage() {
           <div className="k">Entities tracked</div>
           <div className="v mono">{(entityData.entities || []).length || '-'}</div>
         </div>
+        <div className="stat">
+          <div className="k">Bias</div>
+          <div className="v mono">
+            <span className="tone-up">{biasCounts.BULLISH || 0}</span>
+            {' / '}
+            <span className="tone-down">{biasCounts.BEARISH || 0}</span>
+          </div>
+        </div>
       </div>
+
+      <section className="card">
+        <h2>Bias meter</h2>
+        <p className="hint">
+          Current verdict per symbol and horizon, strongest first. A direction is only called
+          once the evidence clears the confidence floor.
+        </p>
+        <BiasPanel rows={bias.rows} showHorizon />
+      </section>
 
       <div className="grid cols-2">
         <section className="card">

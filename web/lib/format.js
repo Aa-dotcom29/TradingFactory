@@ -113,3 +113,13 @@ export function directionTone(direction) {
   if (v === 'BEARISH') return 'down';
   return 'muted';
 }
+
+// A [-1, 1] score is only coloured once it clears a dead-band, so a score of +0.02 does not
+// read as a bullish call.
+export function scoreTone(value) {
+  const n = toNumber(value);
+  if (!Number.isFinite(n)) return 'muted';
+  if (n >= 0.1) return 'up';
+  if (n <= -0.1) return 'down';
+  return 'muted';
+}

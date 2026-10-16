@@ -163,3 +163,53 @@ export async function getFlowFeatures(limit = 10) {
     return empty;
   }
 }
+
+// Slice 3: the current bias verdict per symbol for one horizon. distinct-on gives the latest
+// row per symbol without needing a window function.
+export async function getBias(horizon, limit = 12) {
+  const sql = db();
+  if (!sql) return [];
+  try {
+    return await sql`
+      select * from (
+        select distinct on (symbol)
+          symbol, direction, score, confidence, coverage, as_of, components, evidence, config_version
+        from bias_verdicts
+        where horizon = ${horizon}
+        order by symbol, as_of desc
+      ) t
+      order by abs(score) desc, symbol asc
+      limit ${limit}
+    `;
+  } catch {
+    return [];
+  }
+}
+
+// Slice 3: latest verdict for every (horizon, symbol) pair, plus direction counts for the
+// overview. Counts cover every pair, not just the rows returned for display.
+export async function getBiasOverview(limit = 6) {
+  const empty = { rows: [], counts: { BULLISH: 0, BEARISH: 0, NEUTRAL: 0 }, asOf: null };
+  const sql = db();
+  if (!sql) return empty;
+  try {
+    const rows = await sql`
+      select * from (
+        select distinct on (horizon, symbol)
+          symbol, horizon, direction, score, confidence, coverage, as_of
+        from bias_verdicts
+        order by horizon, symbol, as_of desc
+      ) t
+      order by abs(score) desc, symbol asc
+    `;
+    const counts = { BULLISH: 0, BEARISH: 0, NEUTRAL: 0 };
+    let asOf = null;
+    for (const row of rows) {
+      counts[row.direction] = (counts[row.direction] || 0) + 1;
+      if (!asOf || row.as_of > asOf) asOf = row.as_of;
+    }
+    return { rows: rows.slice(0, limit), counts, asOf };
+  } catch {
+    return empty;
+  }
+}

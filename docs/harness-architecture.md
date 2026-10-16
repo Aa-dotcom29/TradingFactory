@@ -28,7 +28,7 @@ Sources                      Harness worker (always-on)                    Chann
 -------                      --------------------------                    --------
 Angel One REST (quotes,      W0 ingest -> Postgres + queue
   greeks, instrument master)   |                +--> W1 news / W2 flow (Slice 2)
-NSE (OI spurts, option         |                +--> later: W3..W7
+NSE (OI spurts, option         |                +--> W3 bias (Slice 3) / later: W4..W7
   chain; cookie-primed)        v
 RSS feeds (ET, BS, MC,       W8 supervisor (health, queue, freshness)
   Google News)
@@ -62,7 +62,7 @@ Workers and what they own:
 |---|---|---|
 | W0 ingest | fetch/normalize/persist raw data | news.raw, flow.snapshot, feature.snapshot |
 | W1 news | dedupe, entity, sentiment, severity | news.scored |
-| W2 analyser | features, news<->OI<->price correlation | feature.snapshot |
+| W2 analyser | flow features per symbol (news<->OI<->price correlation moves to W3) | feature.snapshot |
 | W3 bias | weighted ensemble verdict | bias.verdict |
 | W4 signal | strike/premium/entry/target/stop, liquidity | signal.candidate |
 | W5 risk | non-bypassable gates + sizing | signal.approved / signal.rejected |
@@ -72,8 +72,9 @@ Workers and what they own:
 
 ## Data model rules
 
-- Time-series tables (`market_snapshots`, `oi_spurts`, `news_items`, `features`) are
-  range-partitioned by month, with a DEFAULT partition so writes never fail.
+- Time-series tables (`market_snapshots`, `oi_spurts`, `news_items`, `features`,
+  `bias_verdicts`) are range-partitioned by month, with a DEFAULT partition so writes never
+  fail.
 - News dedupe uses a non-partitioned `news_seen` registry (a hash must be unique globally).
 - `signals` is immutable (trigger rejects snapshot edits) and retention-protected
   (trigger rejects deletes inside 90 days).
@@ -102,17 +103,41 @@ Both functions are pure (no network, no DB, no LLM), so a signal can always be e
 stored inputs and replayed offline. Neither emits a direction: turning these features into a
 verdict is W3's job.
 
-## Worker responsibilities (Slice 2 as built)
+## Worker responsibilities (Slice 2 and Slice 3 as built)
 
 | Worker | Consumes | Produces |
 |---|---|---|
 | W0 ingest | Angel One REST, NSE OI spurts, RSS | `market_snapshots`, `oi_spurts`; enqueues `news.raw`, `flow.snapshot`, `feature.snapshot` |
 | W1 news | `news.raw` | `news_items` (persisted), `news_seen` (permanent dedupe), `features` set `news.entity.v1`; enqueues `news.scored` |
 | W2 flow | `flow.snapshot` | `features` set `flow.v1`; enqueues `feature.snapshot` |
+| W3 bias | `news.scored`, `feature.snapshot` (triggers only) | `bias_verdicts`; enqueues `bias.verdict` |
 | W8 supervisor | (read-only) | `sources_health` heartbeat, queue housekeeping |
 
-W2's remaining job - correlating news against OI and price - lands with W3, once there is a
-verdict to correlate against.
+A work queue is not pub/sub, so the topics above are consumed by exactly one stage each: W2
+takes `flow.snapshot`, W3 takes `feature.snapshot`.
+
+## Bias meter (Slice 3)
+
+`bias.js` turns features and a price snapshot into a directional verdict per symbol and horizon:
+
+- Evidence sources are independent *signals*: `news` (entity pressure), `flow` (build-up
+  quadrant mix plus put-call open-interest change) and `price` (move from previous close and
+  position in range).
+- Each signal returns a score in [-1, 1] **and** a confidence in [0, 1]. The verdict score is
+  the weight-averaged score; confidence is the weight-averaged confidence multiplied by how
+  much of the intended evidence weight is actually present (`coverage`).
+- A direction is only called above `thresholds.minConfidence`; below it the verdict stays
+  NEUTRAL with a low confidence. A thin-data day therefore reads as "we do not know", not as a
+  weak call.
+- Weights move with the horizon (intraday leans on flow and price, positional on news and
+  trend) and live in `config_registry`, not in code. W3 registers the built-in baseline as
+  `bias-v1` on first run; a human can supersede it by approving a new version.
+- Verdicts are persisted only on a material change (direction flip, `|delta score|` above
+  `materialChange.scoreDelta`, or a staleness heartbeat), so 24/7 operation does not write an
+  identical row every minute while history stays complete enough to forward-fill.
+
+W2's remaining job - correlating news against OI and price - lands with the signal builder
+(W4), where there is an actual entry to correlate against.
 
 ## Optional LLM
 

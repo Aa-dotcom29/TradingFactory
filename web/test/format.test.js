@@ -10,6 +10,7 @@ import {
   sentimentTone,
   severityTone,
   directionTone,
+  scoreTone,
   istStamp,
   timeAgo,
 } from '../lib/format.js';
@@ -56,6 +57,12 @@ test('sentiment, severity and direction tones', () => {
   assert.equal(severityTone('HIGH'), 'warn');
   assert.equal(directionTone('BULLISH'), 'up');
   assert.equal(directionTone('BEARISH'), 'down');
+  // A score inside the dead-band must not read as a direction.
+  assert.equal(scoreTone(0.42), 'up');
+  assert.equal(scoreTone(-0.42), 'down');
+  assert.equal(scoreTone(0.02), 'muted');
+  assert.equal(scoreTone(-0.02), 'muted');
+  assert.equal(scoreTone(null), 'muted');
 });
 
 test('istStamp renders in Asia/Kolkata, not local time', () => {

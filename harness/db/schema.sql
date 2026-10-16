@@ -135,6 +135,30 @@ create table if not exists features (
   primary key (id, as_of)
 ) partition by range (as_of);
 
+-- Index that keeps "latest feature set" reads cheap once the partitions have months of data.
+create index if not exists features_set_asof_idx on features (feature_set, as_of desc);
+
+-- ---------------------------------------------------------------------------
+-- Bias verdicts (Slice 3) - the input to signals, kept as its own auditable series
+-- so the bias meter can be backtested separately from the signals it feeds.
+-- ---------------------------------------------------------------------------
+create table if not exists bias_verdicts (
+  id             uuid not null default gen_random_uuid(),
+  as_of          timestamptz not null,
+  symbol         text not null,
+  horizon        text not null check (horizon in ('INTRADAY','SWING','POSITIONAL')),
+  direction      text not null check (direction in ('BULLISH','NEUTRAL','BEARISH')),
+  score          numeric not null,
+  confidence     numeric not null,
+  coverage       numeric,
+  components     jsonb not null default '{}'::jsonb,
+  evidence       jsonb not null default '[]'::jsonb,
+  config_version text not null,
+  engine_version text not null,
+  primary key (id, as_of)
+) partition by range (as_of);
+create index if not exists bias_verdicts_lookup_idx on bias_verdicts (horizon, symbol, as_of desc);
+
 -- ---------------------------------------------------------------------------
 -- Signals (immutable, versioned, retention-protected)
 -- ---------------------------------------------------------------------------
@@ -281,7 +305,7 @@ declare
   start_month date;
   part_name   text;
 begin
-  foreach parent in array array['market_snapshots','oi_spurts','news_items','features'] loop
+  foreach parent in array array['market_snapshots','oi_spurts','news_items','features','bias_verdicts'] loop
     for i in 0..months_ahead loop
       start_month := (date_trunc('month', now()) + (i || ' month')::interval)::date;
       part_name := format('%s_%s', parent, to_char(start_month, 'YYYYMM'));
@@ -299,6 +323,8 @@ select tf_ensure_partitions(3);
 insert into schema_migrations (version) values ('0001_harness_backbone')
   on conflict (version) do nothing;
 insert into schema_migrations (version) values ('0002_slice1_auth')
+  on conflict (version) do nothing;
+insert into schema_migrations (version) values ('0003_slice3_bias')
   on conflict (version) do nothing;
 
 commit;

@@ -122,6 +122,5 @@ web/
 
 ## Next
 
-Slice 3 is the bias meter (W3): a weighted ensemble that combines entity pressure, flow
-features and price into a `bias.verdict` per horizon, with the weights living in
-`config_registry` so they can be tuned and versioned rather than baked into code.
+Slice 3 - the bias meter (W3) - is now built: it combines entity pressure, flow features and
+price into a versioned verdict per horizon. See `docs/slice-3-bias.md`.
