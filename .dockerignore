@@ -1,9 +1,34 @@
+# Build-context hygiene. The Dockerfiles copy trees (COPY web/ ./, COPY harness ./harness),
+# so anything not excluded here lands in the image. Secrets are the priority.
+
+# Local secrets - never bake these into an image layer.
 .env
 .env.*
 !.env.example
-.git
-.logs
-.npm-cache
-data
+
+# Dependencies are reinstalled inside the image; local copies are stale and bloated.
 node_modules
+**/node_modules
+
+# Build output is produced inside the image.
+.next
+**/.next
+out
+dist
+
+# VCS and tooling
+.git
+.agents
+skills-lock.json
+
+# Local data and scratch
+data
+harness/data
+*.ndjson
 work
+*.log
+
+# Docs are not needed to run the stack.
+docs
+*.md
+!README.md

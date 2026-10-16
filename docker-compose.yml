@@ -26,8 +26,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    # Bound to loopback only: the worker and the dashboard reach Postgres over the compose
+    # network, so there is no reason for the port to be reachable from the internet. Leave this
+    # at 5432:5432 on a public VM and the database is one weak password away from being public.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
   worker:
     build:
@@ -54,6 +57,25 @@ services:
       ANGEL_API_KEY: ${ANGEL_API_KEY:-}
       ANGEL_PASSWORD: ${ANGEL_PASSWORD:-}
       ANGEL_TOTP_SECRET: ${ANGEL_TOTP_SECRET:-}
+
+      # Yahoo fallback quotes. Used only when Angel One is above is not configured.
+      HARNESS_YAHOO_ENABLED: ${HARNESS_YAHOO_ENABLED:-true}
+      HARNESS_YAHOO_TIMEOUT_MS: ${HARNESS_YAHOO_TIMEOUT_MS:-15000}
+      HARNESS_YAHOO_SPACING_MS: ${HARNESS_YAHOO_SPACING_MS:-400}
+
+      # Delivery and retention. `PUBLISH_MODE=shadow` writes the signal and the exact message but
+      # sends nothing; flip to `live` per horizon once the household trusts the output.
+      PUBLISH_MODE: ${PUBLISH_MODE:-shadow}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_API_ROOT: ${TELEGRAM_API_ROOT:-https://api.telegram.org}
+      TELEGRAM_TIMEOUT_MS: ${TELEGRAM_TIMEOUT_MS:-10000}
+      HARNESS_RETENTION_DAYS: ${HARNESS_RETENTION_DAYS:-90}
+
+      # Optional LLM enrichment only. Never in the decision path; the rule engine stays
+      # authoritative and the harness falls back to it on any error or quota exhaustion.
+      HARNESS_LLM_ENABLED: ${HARNESS_LLM_ENABLED:-false}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
 
   web:
     build:

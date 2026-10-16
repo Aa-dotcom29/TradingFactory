@@ -1,0 +1,39 @@
+# TLS overlay for the dashboard.
+#
+# The base `docker-compose.yml` exposes the dashboard over plain HTTP on 3000, which is fine
+# for a first look but not for the family dashboard in production: the session cookie is Secure,
+# so over HTTP it is never sent and the dashboard appears signed out.
+#
+# This overlay replaces that arrangement: the dashboard is no longer published at all, and nginx
+# terminates TLS on 443 while still forwarding the plain HTTP port to 443 by redirect, so old
+# bookmarked links keep working.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --build
+#
+# Certificates: drop a cert/key pair at ./nginx/certs/tls.crt and ./nginx/certs/tls.key before
+# starting, or nginx will fail to start (see docs/oracle-deploy.md, section 8).
+
+services:
+  # Not published to the host; nginx is now the only way in.
+  web:
+    ports: !override []
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/nginx.conf:ro
+      # Read-only so the running proxy cannot tamper with the key.
+      - ./nginx/certs:/etc/nginx/certs:ro
+    # Conservative: refuse to restart-notify-adjacent.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --no-check-certificate https://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -1,0 +1,2 @@
+# Placeholder: replace these with real certificates before bringing up the TLS overlay.
+# See `docs/oracle-deploy.md`, section 8, for the openssl command.

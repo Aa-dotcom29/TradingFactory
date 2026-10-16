@@ -6,18 +6,30 @@ the Next.js dashboard via `docker-compose.yml`. Zero recurring cost, truly alway
 ## 1. Create the VM
 
 1. Oracle Cloud Console -> Compute -> Instances -> **Create instance**.
-2. Image: **Ubuntu 22.04** (or Oracle Linux 9).
+2. Image: **Oracle Linux 9** aarch64 (validated) or **Ubuntu 22.04** aarch64.
 3. Shape: **VM.Standard.A1.Flex** (ARM Ampere). Always Free allows up to 4 OCPUs and
-   24 GB RAM - 2 OCPU / 12 GB is plenty. This is the Always Free ARM shape; do not pick
-   a paid x86 shape.
+   24 GB RAM - 1 OCPU / 6 GB is enough to start. This is the Always Free ARM shape; do not pick
+   a paid x8x shape. Retry later off-peak if the shape reports out of capacity in your AD.
 4. Add your SSH public key.
-5. Ensure the subnet has a public IP and the security list allows inbound **22** (SSH),
-   **80** and **443** (dashboard) - or a custom port if you prefer.
+5. Ensure the subnet has a public IP. In the security list allow inbound **22** (SSH) and
+   **3000** (dashboard). Add **80**/**443** when you bring up the TLS overlay in section 8.
 
-> Postgres is not exposed to the internet in the compose file; keep port `5432` closed
-> in the security list. The worker and dashboard talk to it over the Docker network.
+> Postgres is not exposed at all: the compose file binds `5432` to `127.0.0.1` only, and the
+> worker and dashboard reach it over the Docker network. Leave `5432` closed in the security
+> list - there is no scenario where it should be public.
 
 ## 2. Install Docker
+
+Oracle Linux 9 (the validated image):
+
+```bash
+sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"   # log out and back in
+```
+
+Ubuntu 22.04 instead:
 
 ```bash
 sudo apt-get update
@@ -82,17 +94,36 @@ git pull
 docker compose up -d --build
 ```
 
-## 8. Optional: HTTPS and a domain
+## 8. HTTPS and a domain
 
-Put Caddy in front for automatic TLS, or add a Caddy service to the compose file:
+The session cookie is `Secure` under `NODE_ENV=production`, so serving plain HTTP means the
+browser silently refuses to send the login cookie and the dashboard appears signed out. Put a
+TLS-terminating reverse proxy in front.
 
+An nginx overlay is included. Bring it up as a second compose file rather than editing the base
+one, so the plain-HTTP path still works for a first look:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --build
 ```
-dashboard.example.com {
-    reverse_proxy web:3000
-}
+
+Generate a self-signed certificate once (a real certificate needs a domain, so for a family
+dashboard on an IP this is the usual start):
+
+```bash
+mkdir -p nginx/certs
+openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
+  -keyout nginx/certs/tls.key -out nginx/certs/tls.crt \
+  -subj "/CN=<vm-public-ip>" -addext "subjectAltName=IP:<vm-public-ip>"
+chmod 600 nginx/certs/tls.key
 ```
 
-With TLS in place, the session cookie is already `Secure` in production.
+Then copy `nginx/certs/` into the running container, or mount it (the overlay mounts
+`./nginx/certs` read-only). Open `https://<vm-public-ip>` and accept the warning; a
+Let's Encrypt certificate with a domain removes it.
+
+With TLS in place, the session cookie is already `Secure` in production, so nothing else in the
+app changes.
 
 ## Notes and gotchas
 
@@ -105,4 +136,15 @@ With TLS in place, the session cookie is already `Secure` in production.
   idempotent.
 - **Time zone**: the harness reasons in IST internally; the VM can stay UTC.
 - **Backups**: `docker compose exec db pg_dump -U tf tradingfactory > backup.sql`.
-- **Firewall**: remember both the Oracle security list *and* `ufw` if enabled.
+- **Firewall**: there are two layers and both matter. The Oracle **security list** is the outer
+  one; the host firewall is the inner one. On Oracle Linux 9 that is `firewall-cmd`, and on
+  Ubuntu it is `ufw` - neither is installed by default on a fresh VM, so in practice the security
+  list is what protects you. Do not enable a host firewall you have not configured, or you will
+  lock yourself out over SSH.
+- **Do not publish the database**: `docker compose ps` should show `127.0.0.1:5432->5432/tcp`
+  for `db` and `0.0.0.0:3000->3000/tcp` for `web`. If `5432` appears without the `127.0.0.1`
+  prefix, something has overridden the port binding and the database is reachable from the
+  internet.
+- **Secrets**: `.env` is gitignored and excluded from the Docker build context by
+  `.dockerignore`. Check both before pushing (`git check-ignore -v .env`), because a leaked
+  Angel One key is a live broker credential.
