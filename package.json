@@ -12,7 +12,14 @@
     "harness:daily": "node harness/src/run.js --once --dry",
     "harness:selfcheck": "node harness/src/selfcheck.js",
     "harness:schema": "node harness/scripts/apply-schema.js",
-    "harness:test": "node --test \"harness/test/*.test.js\""
+    "harness:test": "node --test \"harness/test/*.test.js\"",
+    "web:install": "npm --prefix web install",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build",
+    "web:start": "npm --prefix web run start",
+    "web:test": "npm --prefix web test",
+    "web:user": "npm --prefix web run create-user",
+    "test:all": "npm run harness:test && npm run web:test"
   },
   "engines": {
     "node": ">=20"

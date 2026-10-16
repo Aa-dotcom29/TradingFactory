@@ -1,10 +1,12 @@
 # Trading Factory harness - free/self-hosted stack.
 # Runs on any always-on host (Oracle Cloud Always Free ARM VM, Render, a VPS, or locally).
-# No commercial managed services required: Postgres + the Node worker, nothing else.
+# No commercial managed services required: Postgres + the Node worker + the Next.js dashboard.
 #
 #   docker compose up -d --build
 #   docker compose logs -f worker
+#   docker compose logs -f web
 #
+# Dashboard: http://<host>:3000  (create the first login with `npm --prefix web run create-user`)
 # Credentials come from a .env file next to this file (see .env.example). Never commit it.
 
 services:
@@ -52,6 +54,22 @@ services:
       ANGEL_API_KEY: ${ANGEL_API_KEY:-}
       ANGEL_PASSWORD: ${ANGEL_PASSWORD:-}
       ANGEL_TOTP_SECRET: ${ANGEL_TOTP_SECRET:-}
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-tf}:${POSTGRES_PASSWORD:-tf_local_password}@db:5432/${POSTGRES_DB:-tradingfactory}
+      DATABASE_SSL: "false"
+      WEB_DB_POOL: ${WEB_DB_POOL:-5}
+    ports:
+      - "3000:3000"
 
 volumes:
   tf-db:

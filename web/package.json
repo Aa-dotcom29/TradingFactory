@@ -1,0 +1,23 @@
+{
+  "name": "trading-factory-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Trading Factory multi-user market intelligence dashboard (Slice 1)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "node --test \"test/*.test.js\"",
+    "create-user": "node scripts/create-user.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "next": "^15.5.0",
+    "postgres": "^3.4.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}

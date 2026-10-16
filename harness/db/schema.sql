@@ -34,6 +34,19 @@ create table if not exists profiles (
   created_at    timestamptz not null default now()
 );
 
+-- Server-side sessions. Only a hash of the cookie token is stored, so a database
+-- leak cannot be replayed as a live login. Logout/revocation is a row delete.
+create table if not exists sessions (
+  id           uuid primary key default gen_random_uuid(),
+  profile_id   uuid not null references profiles(id) on delete cascade,
+  token_hash   text not null unique,
+  created_at   timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  expires_at   timestamptz not null
+);
+create index if not exists sessions_profile_idx on sessions (profile_id);
+create index if not exists sessions_expiry_idx on sessions (expires_at);
+
 -- ---------------------------------------------------------------------------
 -- Operational tables
 -- ---------------------------------------------------------------------------
@@ -284,6 +297,8 @@ end $$;
 select tf_ensure_partitions(3);
 
 insert into schema_migrations (version) values ('0001_harness_backbone')
+  on conflict (version) do nothing;
+insert into schema_migrations (version) values ('0002_slice1_auth')
   on conflict (version) do nothing;
 
 commit;

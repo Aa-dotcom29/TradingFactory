@@ -37,11 +37,13 @@ RSS feeds (ET, BS, MC,       W8 supervisor (health, queue, freshness)
 
 Hosting options, in order of preference given "avoid commercial":
 
-1. **Oracle Cloud Always Free ARM VM** running `docker-compose.yml` (Postgres + worker). Zero cost, truly always-on.
+1. **Oracle Cloud Always Free ARM VM** running `docker-compose.yml` (Postgres + worker + dashboard). Zero cost, truly always-on. **Chosen host.**
 2. **Render** paid background worker via `render.yaml` (you already have Render access).
 3. A VPS or a home server.
 
-Dashboard (Slice 1) is served from the same host as a PWA, so it is browser- and device-independent.
+Dashboard (Slice 1) is served from the same host as a PWA using **Next.js 15** (see
+`web/` and `docs/slice-1-dashboard.md`), so it is browser- and device-independent. It reads
+directly from Postgres; it never talks to a broker.
 
 ## Horizons
 

@@ -87,3 +87,16 @@ A separate, staged autonomous pipeline is being built alongside this MVP under [
 
 It is free/self-hosted first: run `docker compose up -d --build` on any always-on host (for example an Oracle Cloud Always Free VM) or use the `render.yaml` blueprint. Useful commands: `npm run harness:selfcheck`, `npm run harness:test`, `npm run harness:schema`, `npm run harness`. Credentials stay server-side; the rule engine is authoritative and any LLM enrichment is optional.
 
+### Dashboard (Slice 1)
+
+A separate multi-user dashboard lives in [`web/`](./web) as a Next.js 15 app (see [`docs/slice-1-dashboard.md`](./docs/slice-1-dashboard.md)). It provides real email/password logins against the harness `profiles`/`sessions` tables, a household where the owner can add family members, and three horizon tabs - Intraday, Swing and Positional - reading live from the same Postgres the harness writes to. It is installable as a PWA and works on any device.
+
+```powershell
+npm run web:install
+npm run harness:schema                                   # DATABASE_URL required
+npm --prefix web run create-user -- --email you@example.com
+npm run web:dev                                          # http://localhost:3000
+```
+
+In production `docker compose up -d --build` also starts the dashboard on port 3000. See [`docs/oracle-deploy.md`](./docs/oracle-deploy.md) for the Always Free deployment.
+
