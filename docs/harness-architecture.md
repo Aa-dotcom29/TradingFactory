@@ -32,7 +32,8 @@ NSE (OI spurts, option         |                +--> W3 bias (Sl 3) -> W4 signal
   chain; cookie-primed)        |                +--> W5 risk (Sl 5) -> W6 publish (Sl 5)
 RSS feeds (ET, BS, MC,       W8 supervisor (health, queue, freshness)     Telegram
   Google News)                                                             (shadow-first)
-                             Postgres: partitioned time-series + queue + signals
+Yahoo Finance (fallback
+  quotes, delayed - Sl 5.5)  Postgres: partitioned time-series + queue + signals
 ```
 
 Hosting options, in order of preference given "avoid commercial":
@@ -111,11 +112,11 @@ Both functions are pure (no network, no DB, no LLM), so a signal can always be e
 stored inputs and replayed offline. Neither emits a direction: turning these features into a
 verdict is W3's job.
 
-## Worker responsibilities (Slice 2 through Slice 5 as built)
+## Worker responsibilities (Slice 2 through Slice 5.5 as built)
 
 | Worker | Consumes | Produces |
 |---|---|---|
-| W0 ingest | Angel One REST, NSE OI spurts, RSS | `market_snapshots`, `oi_spurts`; enqueues `news.raw`, `flow.snapshot`, `feature.snapshot` |
+| W0 ingest | Angel One REST, Yahoo Finance fallback, NSE OI spurts, RSS | `market_snapshots`, `oi_spurts`; enqueues `news.raw`, `flow.snapshot`, `feature.snapshot` |
 | W1 news | `news.raw` | `news_items` (persisted), `news_seen` (permanent dedupe), `features` set `news.entity.v1`; enqueues `news.scored` |
 | W2 flow | `flow.snapshot` | `features` set `flow.v1`; enqueues `feature.snapshot` |
 | W3 bias | `news.scored`, `feature.snapshot` (triggers only) | `bias_verdicts`; enqueues `bias.verdict` |
@@ -210,6 +211,36 @@ open-position ledger, counted over a horizon-specific window (`holdingDays`). Pe
 is capped at one, so in the meantime a symbol that has already been signalled will not be
 signalled again inside that window. That is deliberate while there is no exit path, and it is the
 first thing W7 should replace.
+
+## Quote provenance and the fallback source (Slice 5.5)
+
+The bias meter's `price` component is the strongest single input, and it needs exactly two numbers
+per symbol: a last price and a previous close. With no quote source configured the pipeline still
+runs, but every verdict collapses to `NEUTRAL` at the evidence floor, which makes the whole chain
+look broken when it is really just starved. Slice 5.5 closes that gap and, more importantly, makes
+the *origin* of every number explicit.
+
+- **Provider waterfall.** W0 tries the live broker feed first (Angel One) and falls back to Yahoo
+  Finance only when Angel is unconfigured, errors, or returns no rows. The chosen provider is
+  recorded in `market_snapshots.provider` and, for quotes, in `features.provenance`.
+- **Provenance travels with the number.** The value is written on `features` (`quote.v1`),
+  carried onto `bias_verdicts.provenance`, and again onto `signal_candidates.provenance`, so an
+  audit can go from a published signal back to the exact source of its price. The queue messages
+  carry it too (`quoteProvenance`, `provenance`).
+- **A delayed read is never dressed up as a live one.** Yahoo's NSE quotes lag the exchange (about
+  fifteen minutes intraday), so they are tagged `yahoo-delayed` and rendered as a caution pill.
+  Angel rows are `angel-live`. Both the health panel (`yahoo-quotes HEALTHY ... delayed quotes`)
+  and the bias/signal panels show the tag; nothing assumes a live tick.
+- **Nothing is invented.** A symbol Yahoo does not answer for produces a per-symbol error, never a
+  fabricated price; the batch keeps going and the failures are counted in `sources_health`.
+
+**Known limitation, stated honestly.** A quote carries its own exchange timestamp
+(`values.quoteTime`) and a capture time (`features.as_of`), but the `price` component does not yet
+age-weight them: outside a session, the most recent close is still read as if it were current
+momentum. Practically this is inert today, because the risk gate defers every candidate outside
+NSE hours, and W0 re-polls continuously during a session. It should be addressed before intraday
+go-live, either by down-weighting a stale quote in `priceSignal` or by refusing to emit a `price`
+component whose age exceeds the horizon's tolerance.
 
 ## Optional LLM
 

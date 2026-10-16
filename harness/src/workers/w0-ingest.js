@@ -12,7 +12,9 @@ const queue = require('../queue');
 const { TOPICS } = require('../topics');
 const rss = require('../sources/rss');
 const nse = require('../sources/nse');
+const yahoo = require('../sources/yahoo');
 const { AngelClient, configured: angelConfigured } = require('../sources/angel-client');
+const { normalizeUniverseSymbol } = require('../bias');
 const { dedupeHash } = require('../normalize');
 
 const log = require('../logger').child({ module: 'w0' });
@@ -74,67 +76,136 @@ class IngestWorker {
     return Boolean(this.indexTokens.length);
   }
 
+  // One insert path for quotes, whichever provider produced them. Provenance travels with the
+  // row into `features`, so a delayed Yahoo read can never be mistaken for a live broker tick.
+  async persistQuotes(rows, { capturedAt, provider, provenance }) {
+    const sql = this.sql;
+    if (!sql || !rows.length) return 0;
+    await sql`
+      insert into market_snapshots ${sql(rows.map((r) => ({
+        captured_at: capturedAt, provider, symbol: r.symbol, kind: 'QUOTE', payload: r.payload,
+      })))}
+    `;
+    await sql`
+      insert into features ${sql(rows.map((r) => ({
+        as_of: capturedAt,
+        symbol: r.symbol,
+        feature_set: 'quote.v1',
+        horizon: null,
+        values: r.payload,
+        provenance,
+      })))}
+    `;
+    for (const row of rows) {
+      await queue.enqueue(TOPICS.FEATURE_SNAPSHOT, {
+        symbol: row.symbol, asOf: capturedAt, values: row.payload, provenance,
+      }, { idemKey: `feature:${row.symbol}:${capturedAt}` });
+    }
+    return rows.length;
+  }
+
+  async marketViaAngel() {
+    await this.ensureTokens();
+    const tokens = [...(this.indexTokens || []), ...(this.equityTokens || [])];
+    if (!tokens.length) throw new Error('no instrument tokens resolved');
+    const quotes = await this.angel.quote('FULL', { NSE: tokens.map((t) => t.token) });
+    const capturedAt = new Date().toISOString();
+
+    const rows = quotes.map((q) => {
+      const token = String(q.symbolToken);
+      const known = tokens.find((t) => t.token === token);
+      return {
+        symbol: known ? known.name : (q.tradingSymbol || token),
+        payload: {
+          ltp: Number(q.ltp) || null,
+          open: Number(q.open) || null,
+          high: Number(q.high) || null,
+          low: Number(q.low) || null,
+          close: Number(q.close) || null,
+          openInterest: Number(q.opnInterest) || null,
+          volume: Number(q.tradeVolume) || null,
+          exchange: q.exchange || 'NSE',
+        },
+      };
+    });
+    await this.persistQuotes(rows, {
+      capturedAt, provider: 'Angel One SmartAPI', provenance: 'angel-live',
+    });
+    return { quotes: rows.length, provenance: 'angel-live' };
+  }
+
+  // The free fallback. Yahoo covers the gap while the broker onboarding is unfinished; every row
+  // it produces is tagged delayed, so nothing downstream treats it as live.
+  async marketViaYahoo() {
+    const wanted = [];
+    for (const value of [...config.universe.indices, ...config.universe.equities]) {
+      const symbol = normalizeUniverseSymbol(value);
+      if (symbol && !wanted.includes(symbol)) wanted.push(symbol);
+    }
+    if (!wanted.length) return { quotes: 0, skipped: 'empty-universe' };
+
+    const { quotes, errors } = await yahoo.fetchQuotes(wanted);
+    const capturedAt = new Date().toISOString();
+    const rows = quotes.map((q) => ({
+      symbol: q.symbol,
+      payload: {
+        ltp: q.ltp,
+        open: q.open,
+        high: q.high,
+        low: q.low,
+        close: q.close,
+        openInterest: null,
+        volume: q.volume,
+        exchange: q.exchange,
+        currency: q.currency,
+        quoteTime: q.quoteTime,
+      },
+    }));
+    await this.persistQuotes(rows, {
+      capturedAt, provider: yahoo.PROVIDER, provenance: yahoo.PROVENANCE,
+    });
+
+    const status = quotes.length ? (errors.length ? 'WARNING' : 'HEALTHY') : 'ERROR';
+    await this.markSource(
+      'yahoo-quotes',
+      status,
+      `${quotes.length} delayed quotes${errors.length ? `, ${errors.length} failed` : ''}`,
+    );
+    return { quotes: quotes.length, failed: errors.length, provenance: yahoo.PROVENANCE };
+  }
+
+  // Provider waterfall: the live broker feed first, then the free delayed source, so the pipeline
+  // is never left without a quote while the authoritative source is unavailable.
   async runMarket() {
     if (config.dryRun) {
       log.info('market cycle (dry run)', { indices: config.universe.indices.length });
       return { quotes: 0 };
     }
-    if (!angelConfigured()) {
+
+    if (angelConfigured()) {
+      try {
+        const viaAngel = await this.marketViaAngel();
+        if (viaAngel.quotes > 0) {
+          await this.markSource('angel', 'HEALTHY', `${viaAngel.quotes} quotes`);
+          return viaAngel;
+        }
+        log.warn('Angel One returned no quotes; falling back to the free source');
+      } catch (error) {
+        this.angel.lastError = error.message;
+        await this.markSource('angel', 'ERROR', error.message);
+        log.error('market cycle via Angel One failed', { error: error.message });
+      }
+    } else {
       await this.markSource('angel', 'DISABLED', 'Angel One credentials not configured');
-      return { quotes: 0, skipped: 'not-configured' };
     }
 
-    try {
-      await this.ensureTokens();
-      const tokens = [...(this.indexTokens || []), ...(this.equityTokens || [])];
-      if (!tokens.length) throw new Error('no instrument tokens resolved');
-      const quotes = await this.angel.quote('FULL', { NSE: tokens.map((t) => t.token) });
-      const capturedAt = new Date().toISOString();
+    if (!config.yahoo.enabled) return { quotes: 0, skipped: 'no-quote-source' };
 
-      const sql = this.sql;
-      if (sql && quotes.length) {
-        const rows = quotes.map((q) => {
-          const token = String(q.symbolToken);
-          const known = tokens.find((t) => t.token === token);
-          return {
-            symbol: known ? known.name : (q.tradingSymbol || token),
-            payload: {
-              ltp: Number(q.ltp) || null,
-              open: Number(q.open) || null,
-              high: Number(q.high) || null,
-              low: Number(q.low) || null,
-              close: Number(q.close) || null,
-              openInterest: Number(q.opnInterest) || null,
-              volume: Number(q.tradeVolume) || null,
-              exchange: q.exchange || 'NSE',
-            },
-          };
-        });
-        // Insert as jsonb array rows in one round trip.
-        await sql`
-          insert into market_snapshots ${sql(rows.map((r) => ({ captured_at: capturedAt, provider: 'Angel One SmartAPI', symbol: r.symbol, kind: 'QUOTE', payload: r.payload })))}
-        `;
-        await sql`
-          insert into features ${sql(rows.map((r) => ({
-            as_of: capturedAt,
-            symbol: r.symbol,
-            feature_set: 'quote.v1',
-            horizon: null,
-            values: r.payload,
-          })))}
-        `;
-        for (const row of rows) {
-          await queue.enqueue(TOPICS.FEATURE_SNAPSHOT, { symbol: row.symbol, asOf: capturedAt, values: row.payload }, {
-            idemKey: `feature:${row.symbol}:${capturedAt}`,
-          });
-        }
-      }
-      await this.markSource('angel', 'HEALTHY', `${quotes.length} quotes`);
-      return { quotes: quotes.length };
+    try {
+      return await this.marketViaYahoo();
     } catch (error) {
-      this.angel.lastError = error.message;
-      await this.markSource('angel', 'ERROR', error.message);
-      log.error('market cycle failed', { error: error.message });
+      await this.markSource('yahoo-quotes', 'ERROR', error.message);
+      log.error('market cycle via Yahoo failed', { error: error.message });
       return { quotes: 0, error: error.message };
     }
   }

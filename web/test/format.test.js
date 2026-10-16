@@ -15,6 +15,8 @@ import {
   candidateStatusTone,
   decisionTone,
   publishModeTone,
+  provenanceTone,
+  provenanceLabel,
   istStamp,
   timeAgo,
 } from '../lib/format.js';
@@ -92,6 +94,16 @@ test('risk decisions colour only an approval as a green light', () => {
   assert.equal(decisionTone(undefined), 'muted');
   assert.equal(publishModeTone('shadow'), 'warn');
   assert.equal(publishModeTone('live'), 'accent');
+});
+
+test('provenance never dresses a delayed read up as a live one', () => {
+  assert.equal(provenanceTone('angel-live'), 'accent');
+  assert.equal(provenanceTone('yahoo-delayed'), 'warn');
+  assert.equal(provenanceTone(null), 'muted');
+  assert.equal(provenanceTone('something-else'), 'muted');
+  assert.equal(provenanceLabel('angel-live'), 'live feed');
+  assert.equal(provenanceLabel('yahoo-delayed'), 'delayed quotes');
+  assert.equal(provenanceLabel(null), 'source unknown');
 });
 
 test('istStamp renders in Asia/Kolkata, not local time', () => {

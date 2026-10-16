@@ -1,6 +1,7 @@
 import {
   directionTone, stageTone, candidateStatusTone, istStamp, num, pct,
 } from '@/lib/format';
+import Provenance from '@/components/Provenance';
 
 // Slice 4 output: the concrete tradeable proposals the signal builder raised. They are NOT
 // published signals - every one is waiting for the non-bypassable risk gate (W5, the next
@@ -37,11 +38,12 @@ export default function SignalCandidates({ candidates = [], showHorizon = false 
                 {istStamp(candidate.as_of)} IST
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start', flexWrap: 'wrap' }}>
               <span className={`pill ${directionTone(candidate.direction)}`}>{candidate.direction}</span>
               <span className={`pill ${candidateStatusTone(candidate.status)}`}>
                 {String(candidate.status || '').replace(/_/g, ' ')}
               </span>
+              <Provenance value={candidate.provenance} />
             </div>
           </div>
 

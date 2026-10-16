@@ -159,3 +159,19 @@ export function decisionTone(decision) {
 export function publishModeTone(mode) {
   return String(mode || '').toLowerCase() === 'shadow' ? 'warn' : 'accent';
 }
+
+// Slice 5.5: where a market number came from. A delayed read must never be dressed up as a live
+// one, so the fallback source is coloured as a caution rather than as a normal value.
+export function provenanceTone(provenance) {
+  const value = String(provenance || '').toLowerCase();
+  if (value === 'angel-live') return 'accent';
+  if (value.includes('delayed')) return 'warn';
+  return 'muted';
+}
+
+export function provenanceLabel(provenance) {
+  const value = String(provenance || '').toLowerCase();
+  if (value === 'angel-live') return 'live feed';
+  if (value === 'yahoo-delayed') return 'delayed quotes';
+  return value || 'source unknown';
+}

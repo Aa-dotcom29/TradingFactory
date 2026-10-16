@@ -23,6 +23,7 @@ const { SignalWorker } = require('./workers/w4-signals');
 const { RiskWorker } = require('./workers/w5-risk');
 const { PublishWorker } = require('./workers/w6-publish');
 const rss = require('./sources/rss');
+const yahoo = require('./sources/yahoo');
 
 const checks = [];
 const record = (name, ok, detail) => {
@@ -233,6 +234,34 @@ async function pureFunctionChecks() {
     typeof RiskWorker === 'function' && typeof PublishWorker === 'function'
       && TOPICS.SIGNAL_APPROVED === 'signal.approved' && DEFAULT_RISK_CONFIG.version === 'risk-v1',
   );
+
+  record(
+    'slice 5.5 yahoo symbol mapping',
+    yahoo.yahooSymbol('NIFTY') === '^NSEI' && yahoo.yahooSymbol('RELIANCE') === 'RELIANCE.NS',
+  );
+
+  const yahooQuote = yahoo.parseChart({
+    chart: {
+      result: [{
+        meta: {
+          symbol: '^NSEI', currency: 'INR', regularMarketPrice: 23146.15,
+          chartPreviousClose: 22622.7, regularMarketDayHigh: 23149.85, regularMarketDayLow: 22913.8,
+        },
+        indicators: { quote: [{ open: [22900], close: [23146.15] }] },
+      }],
+    },
+  }, 'NIFTY');
+  record(
+    'slice 5.5 yahoo chart parse',
+    yahooQuote && yahooQuote.ltp === 23146.15 && yahooQuote.close === 22622.7
+      && yahooQuote.provenance === 'yahoo-delayed' && yahooQuote.exchange === 'NSE',
+    yahooQuote ? `ltp=${yahooQuote.ltp} prevClose=${yahooQuote.close}` : 'no quote',
+  );
+
+  record(
+    'slice 5.5 price signal reads the fallback quote',
+    priceSignal({ ltp: yahooQuote.ltp, close: yahooQuote.close, high: yahooQuote.high, low: yahooQuote.low }, biasConfig).available === true,
+  );
 }
 
 async function databaseChecks() {
@@ -269,7 +298,7 @@ async function databaseChecks() {
 async function main() {
   console.log('Trading Factory harness self-check');
   console.log(`  env=${config.env} role=${config.role} dryRun=${config.dryRun}`);
-  console.log(`  angel configured=${config.angel.configured()}  nse=${config.nse.enabled}  rss feeds=${config.rss.feeds.length}`);
+  console.log(`  angel configured=${config.angel.configured()}  nse=${config.nse.enabled}  yahoo=${config.yahoo.enabled}  rss feeds=${config.rss.feeds.length}`);
   console.log(`  publish mode=${config.publish.mode}  telegram configured=${config.telegram.configured()}`);
 
   await pureFunctionChecks();

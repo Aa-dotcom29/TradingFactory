@@ -406,6 +406,18 @@ create index if not exists risk_decisions_candidate_idx on risk_decisions (candi
 create index if not exists risk_decisions_decision_idx on risk_decisions (decision, evaluated_at desc);
 create index if not exists signal_events_state_idx on signal_events (new_state, at desc);
 
+-- ---------------------------------------------------------------------------
+-- Slice 5.5 - quote provenance
+--
+-- A quote can now come from Angel One (live) or Yahoo (delayed). The number alone is not
+-- enough: "is this live or 15 minutes old" changes how much weight it deserves, so the source
+-- travels with the row from the feature table through the verdict to the candidate.
+-- ---------------------------------------------------------------------------
+alter table features add column if not exists provenance text;
+alter table bias_verdicts add column if not exists provenance text;
+alter table signal_candidates add column if not exists provenance text;
+create index if not exists features_provenance_idx on features (feature_set, provenance, as_of desc);
+
 insert into schema_migrations (version) values ('0001_harness_backbone')
   on conflict (version) do nothing;
 insert into schema_migrations (version) values ('0002_slice1_auth')
@@ -415,6 +427,8 @@ insert into schema_migrations (version) values ('0003_slice3_bias')
 insert into schema_migrations (version) values ('0004_slice4_signals')
   on conflict (version) do nothing;
 insert into schema_migrations (version) values ('0005_slice5_risk_publish')
+  on conflict (version) do nothing;
+insert into schema_migrations (version) values ('0006_slice5_quote_fallback')
   on conflict (version) do nothing;
 
 commit;

@@ -112,22 +112,27 @@ class BiasWorker {
   }
 
   // Latest values per symbol for one feature set. The durable table is the single source of
-  // truth, so a replayed run produces identical verdicts.
+  // truth, so a replayed run produces identical verdicts. Provenance is carried alongside the
+  // values so a verdict can record whether its quote was live or delayed.
   async latestFeatureMap(featureSet) {
     const sql = this.sql;
     const rows = await sql`
-      select symbol, values, as_of
+      select symbol, values, as_of, provenance
       from features
       where feature_set = ${featureSet}
         and as_of = (select max(as_of) from features where feature_set = ${featureSet})
     `;
     const map = new Map();
+    const provenance = new Map();
     let asOf = null;
     for (const row of rows) {
-      if (!map.has(row.symbol)) map.set(row.symbol, row.values);
+      if (!map.has(row.symbol)) {
+        map.set(row.symbol, row.values);
+        provenance.set(row.symbol, row.provenance || null);
+      }
       if (!asOf || row.as_of > asOf) asOf = row.as_of;
     }
-    return { asOf, map };
+    return { asOf, map, provenance };
   }
 
   async loadPriorVerdicts() {
@@ -206,6 +211,7 @@ class BiasWorker {
             evidence: verdict.evidence,
             config_version: version,
             engine_version: ENGINE_VERSION,
+            provenance: quoteSet.provenance.get(verdict.symbol) || null,
           })))}
         `;
 
@@ -221,6 +227,7 @@ class BiasWorker {
             flowAsOf: flowSet.asOf ? new Date(flowSet.asOf).toISOString() : null,
             configVersion: version,
             engineVersion: ENGINE_VERSION,
+            quoteProvenance: quoteSet.provenance.get(verdict.symbol) || null,
             evidence: verdict.evidence,
           }, {
             idemKey: `bias:${verdict.horizon}:${verdict.symbol}:${asOf}`,

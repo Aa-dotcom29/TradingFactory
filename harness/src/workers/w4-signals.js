@@ -119,18 +119,25 @@ class SignalWorker {
   }
 
   // Latest values per symbol for one feature set. The durable table is the single source of
-  // truth, so a replayed run produces identical plans.
+  // truth, so a replayed run produces identical plans. Provenance is carried alongside so a
+  // candidate records whether its quote was live or delayed.
   async latestFeatureMap(featureSet) {
     const sql = this.sql;
     const rows = await sql`
-      select symbol, values
+      select symbol, values, provenance
       from features
       where feature_set = ${featureSet}
         and as_of = (select max(as_of) from features where feature_set = ${featureSet})
     `;
     const map = new Map();
-    for (const row of rows) if (!map.has(row.symbol)) map.set(row.symbol, row.values);
-    return map;
+    const provenance = new Map();
+    for (const row of rows) {
+      if (!map.has(row.symbol)) {
+        map.set(row.symbol, row.values);
+        provenance.set(row.symbol, row.provenance || null);
+      }
+    }
+    return { map, provenance };
   }
 
   async loadLatestVerdicts() {
@@ -209,7 +216,9 @@ class SignalWorker {
   // A candidate is raised on a fresh READY entry, or when a name is still READY but its plan
   // changed underneath the verdict (a new strike, a moved stop). A plain score move while READY
   // is not a new candidate.
-  async persistCandidates(changed, { version, now, strategy }) {
+  async persistCandidates(changed, {
+    version, now, strategy, provenance = null,
+  }) {
     const sql = this.sql;
     const entries = changed.filter(({ next, previous }) => {
       if (next.stage !== 'READY' || !next.plan) return false;
@@ -241,14 +250,15 @@ class SignalWorker {
         insert into signal_candidates (
           as_of, horizon, symbol, direction, strategy, strategy_version, engine_version,
           config_version, kind, instrument, strike, option_type, expiry, entry, target, stop, rr,
-          confidence, score, liquidity_ok, status, dedupe_key, setup, reasons
+          confidence, score, liquidity_ok, status, dedupe_key, setup, reasons, provenance
         ) values (
           ${new Date(now).toISOString()}, ${verdict.horizon}, ${verdict.symbol}, ${next.direction},
           ${strategy}, ${version}, ${ENGINE_VERSION},
           ${version}, ${plan.kind}, ${plan.instrument}, ${plan.strike}, ${plan.optionType},
           ${plan.expiry}, ${plan.entry}, ${plan.target}, ${plan.stop}, ${plan.rr},
           ${next.confidence}, ${next.score}, ${next.liquidityOk}, 'pending_risk',
-          ${dedupeKey}, ${sql.json(plan)}, ${sql.json(next.reasons)}
+          ${dedupeKey}, ${sql.json(plan)}, ${sql.json(next.reasons)},
+          ${(provenance && provenance.get(verdict.symbol)) || null}
         )
         on conflict (dedupe_key) do nothing
         returning id
@@ -300,12 +310,14 @@ class SignalWorker {
       const { version, config: signalConfig } = await this.ensureConfig({ now });
       summary.configVersion = version;
 
-      const [flowMap, quoteMap, verdicts, stages] = await Promise.all([
+      const [flowSet, quoteSet, verdicts, stages] = await Promise.all([
         this.latestFeatureMap('flow.v1'),
         this.latestFeatureMap('quote.v1'),
         this.loadLatestVerdicts(),
         this.loadStages(),
       ]);
+      const flowMap = flowSet.map;
+      const quoteMap = quoteSet.map;
       summary.computed = verdicts.length;
       if (!verdicts.length) {
         await this.markSource('signal-builder', 'WARNING', `no bias verdicts to build from (config ${version})`);
@@ -356,6 +368,7 @@ class SignalWorker {
         version,
         now,
         strategy: signalConfig.strategy,
+        provenance: quoteSet.provenance,
       });
       summary.persisted = changed.length;
 

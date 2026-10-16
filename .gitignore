@@ -9,3 +9,7 @@ work/
 # harness local artifacts
 harness/data/
 *.ndjson
+
+# agent tooling artifacts (installed skills, not project code)
+.agents/
+skills-lock.json

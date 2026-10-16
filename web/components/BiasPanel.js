@@ -1,4 +1,5 @@
 import { istStamp, num, signed, directionTone, scoreTone } from '@/lib/format';
+import Provenance from '@/components/Provenance';
 
 // Slice 3 output: the bias meter's verdict per symbol. Score is [-1, 1] and confidence is how
 // much evidence actually backed it, so a name can lean bullish at 5% confidence without ever
@@ -64,7 +65,8 @@ export default function BiasPanel({ rows = [], showHorizon = false }) {
                 </td>
               ) : null}
               <td>
-                <span className={`pill ${directionTone(row.direction)}`}>{row.direction}</span>
+                <span className={`pill ${directionTone(row.direction)}`}>{row.direction}</span>{' '}
+                <Provenance value={row.provenance} />
               </td>
               <td className={`num mono tone-${directionTone(row.direction)}`}>{signed(row.score, 3)}</td>
               <td className="num mono">{num(Number(row.confidence) * 100, 0)}%</td>

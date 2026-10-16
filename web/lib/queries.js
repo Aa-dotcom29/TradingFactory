@@ -184,7 +184,7 @@ export async function getBias(horizon, limit = 12) {
     return await sql`
       select * from (
         select distinct on (symbol)
-          symbol, direction, score, confidence, coverage, as_of, components, evidence, config_version
+          symbol, direction, score, confidence, coverage, as_of, components, evidence, config_version, provenance
         from bias_verdicts
         where horizon = ${horizon}
         order by symbol, as_of desc
@@ -207,7 +207,7 @@ export async function getBiasOverview(limit = 6) {
     const rows = await sql`
       select * from (
         select distinct on (horizon, symbol)
-          symbol, horizon, direction, score, confidence, coverage, as_of
+          symbol, horizon, direction, score, confidence, coverage, as_of, provenance
         from bias_verdicts
         order by horizon, symbol, as_of desc
       ) t
@@ -289,7 +289,8 @@ export async function getSignalCandidates(horizon = null, limit = 10) {
     if (horizon) {
       return await sql`
         select id, as_of, horizon, symbol, direction, kind, instrument, strike, option_type,
-               expiry, entry, target, stop, rr, confidence, score, liquidity_ok, status, reasons
+               expiry, entry, target, stop, rr, confidence, score, liquidity_ok, status, reasons,
+               provenance
         from signal_candidates
         where horizon = ${horizon}
         order by created_at desc
@@ -298,7 +299,8 @@ export async function getSignalCandidates(horizon = null, limit = 10) {
     }
     return await sql`
       select id, as_of, horizon, symbol, direction, kind, instrument, strike, option_type,
-             expiry, entry, target, stop, rr, confidence, score, liquidity_ok, status, reasons
+             expiry, entry, target, stop, rr, confidence, score, liquidity_ok, status, reasons,
+             provenance
       from signal_candidates
       order by created_at desc
       limit ${limit}

@@ -103,6 +103,20 @@ const config = {
     maxItemsPerFeed: int(process.env.HARNESS_RSS_MAX_ITEMS, 40),
   },
 
+  // Slice 5.5. Free fallback quote source used when Angel One is not configured, so the bias
+  // meter's `price` component has an input. Every row it produces is tagged `yahoo-delayed`,
+  // because Yahoo's NSE quotes lag the exchange.
+  yahoo: {
+    enabled: bool(process.env.HARNESS_YAHOO_ENABLED, true),
+    apiRoot: process.env.HARNESS_YAHOO_API_ROOT || 'https://query1.finance.yahoo.com',
+    range: process.env.HARNESS_YAHOO_RANGE || '1d',
+    interval: process.env.HARNESS_YAHOO_INTERVAL || '1d',
+    timeoutMs: int(process.env.HARNESS_YAHOO_TIMEOUT_MS, 15000),
+    spacingMs: int(process.env.HARNESS_YAHOO_SPACING_MS, 400),
+    userAgent: process.env.HARNESS_YAHOO_USER_AGENT
+      || 'Mozilla/5.0 (compatible; TradingFactory/0.1; market-intelligence harness)',
+  },
+
   poll: {
     marketMs: int(process.env.HARNESS_MARKET_INTERVAL_MS, 10000),
     flowMs: int(process.env.HARNESS_FLOW_INTERVAL_MS, 60000),
