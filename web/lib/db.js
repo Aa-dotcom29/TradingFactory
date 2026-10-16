@@ -1,3 +1,4 @@
+import './env.js';
 import postgres from 'postgres';
 
 // Single shared Postgres client for the dashboard. Returns null when the database

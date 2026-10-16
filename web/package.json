@@ -9,7 +9,8 @@
     "build": "next build",
     "start": "next start",
     "test": "node --test \"test/*.test.js\"",
-    "create-user": "node scripts/create-user.js"
+    "create-user": "node scripts/create-user.js",
+    "dev-db": "node scripts/dev-db.js"
   },
   "engines": {
     "node": ">=20"
@@ -19,5 +20,8 @@
     "postgres": "^3.4.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "embedded-postgres": "^18.4.0-beta.17"
   }
 }

@@ -31,14 +31,22 @@ The dashboard never talks to a broker. It only reads the tables the harness fill
 
 Requirements: Node 20+ and a Postgres reachable via `DATABASE_URL`.
 
+**Option A - a local Postgres with no admin rights and no Docker** (dev/verification only;
+real Postgres 18 binaries managed by `embedded-postgres`, data kept in
+`%LOCALAPPDATA%\tf-postgres` so OneDrive never syncs a live cluster):
+
 ```powershell
 cd "C:\Users\Adari\OneDrive\Desktop\My Dashboard\TradingFactory"
 
-# 1. install dashboard deps (once)
-npm run web:install
+copy .env.example .env            # then set DATABASE_URL (see below)
+npm run web:install               # install dashboard deps (once)
+npm run dev:db                    # leave running; prints the DATABASE_URL to use
+```
 
+In another terminal:
+
+```powershell
 # 2. apply the schema (creates households, profiles, sessions, time-series tables)
-#    DATABASE_URL must be set in .env first
 npm run harness:schema
 
 # 3. create the first household login (prints a generated password if you omit one)
@@ -48,7 +56,21 @@ npm --prefix web run create-user -- --email you@example.com
 npm run web:dev          # http://localhost:3000
 ```
 
-Then sign in, and add the rest of the family from **Settings**.
+`npm run dev:db` prints the exact `DATABASE_URL` to paste into `.env`, for example
+`postgres://tf:tf_local_password@localhost:5432/tradingfactory`. It initialises the
+cluster as UTF-8 (Windows otherwise defaults to WIN1252, which cannot store a curly
+quote or a rupee sign) and reuses the same data directory on later runs.
+
+**Option B - Docker** (closest to production):
+
+```powershell
+docker compose up -d --build
+docker compose run --rm web node scripts/create-user.js --email you@example.com
+```
+
+The dashboard reads `DATABASE_URL` from the repo-root `.env` (see `web/lib/env.js`), so a
+single `.env` configures both the worker and the dashboard. Then sign in, and add the rest
+of the family from **Settings**.
 
 ## How auth works
 
@@ -82,6 +104,25 @@ The server boots and every route behaves with `DATABASE_URL` unset:
 | `GET /dashboard` | `307` to `/login` (middleware) |
 | `POST /api/auth/login` | `503 {"error":"Database is not configured."}` |
 | `GET /manifest.webmanifest` | `200` |
+
+## Verification against a real database
+
+Run against a local Postgres 18 (UTF-8) with the harness ingest having populated the
+tables in the same session:
+
+| Check | Result |
+|---|---|
+| `npm run harness:schema` | applied, migrations `0001` + `0002` |
+| `node harness/src/run.js --once` | 319 flow rows, 119 news items, 120 queue messages persisted |
+| `POST /api/auth/login` (correct) | `200` + session cookie |
+| `POST /api/auth/login` (wrong) | `401` |
+| `GET /dashboard` unauthenticated | `307` to `/login` |
+| `GET /dashboard` / `intraday` / `swing` / `positional` / `settings` | `200` |
+| `GET /dashboard/nonsense` | `404` |
+| Owner adds a member | `201`; duplicate `409`; short password `400`; no auth `401` |
+| Member signs in independently | `200`, sees the same household dashboard |
+| Logout, then `GET /dashboard` | `307` (session row deleted) |
+| Rendered data | 92 news/24h, 319 flow rows, real headlines, NIFTY build-up quadrants, source health |
 
 Unit tests (no DB required):
 

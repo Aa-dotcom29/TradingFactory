@@ -19,6 +19,7 @@
     "web:start": "npm --prefix web run start",
     "web:test": "npm --prefix web test",
     "web:user": "npm --prefix web run create-user",
+    "dev:db": "npm --prefix web run dev-db",
     "test:all": "npm run harness:test && npm run web:test"
   },
   "engines": {
