@@ -32,6 +32,18 @@ function parseArgs(argv) {
   return flags;
 }
 
+// A tick that did nothing is not news. Logging one line per idle poll would bury the
+// interesting cycles in a 24/7 run, so empty ticks drop to debug level.
+const ACTIVITY_KEYS = [
+  'processed', 'duplicates', 'failed', 'entities', 'items', 'symbols',
+  'quotes', 'rows', 'queued', 'purged', 'purgedStale',
+];
+
+function idleTick(result) {
+  if (!result || typeof result !== 'object' || result.error) return false;
+  return ACTIVITY_KEYS.every((key) => !Number(result[key]));
+}
+
 function makeGuard(name, fn) {
   let running = false;
   return async () => {
@@ -42,7 +54,11 @@ function makeGuard(name, fn) {
     running = true;
     try {
       const result = await fn();
-      if (result && typeof result === 'object') log.info('job complete', { job: name, ...result });
+      if (result && typeof result === 'object') {
+        const line = { job: name, ...result };
+        if (idleTick(result)) log.debug('job idle', line);
+        else log.info('job complete', line);
+      }
     } catch (error) {
       log.error('scheduled job failed', { job: name, error: error.message });
     } finally {

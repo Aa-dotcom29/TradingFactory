@@ -93,7 +93,7 @@ class Supervisor {
     try {
       const [purged, purgedStale] = await Promise.all([
         queue.purgeDone(7),
-        queue.purgeStalePending(6),
+        queue.purgeStalePending(2),
       ]);
       if (purgedStale) log.warn('dropped stale queued notifications', { purgedStale });
       return { purged, purgedStale };

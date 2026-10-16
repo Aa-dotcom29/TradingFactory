@@ -26,6 +26,10 @@ class NewsWorker {
     this.maxPerDrain = options.maxPerDrain || 1000;
     this.entityWindowHours = options.entityWindowHours || 48;
     this.entityLimit = options.entityLimit || 2000;
+    // The window rollup does not need the drain cadence: it is re-run after any new item, and
+    // otherwise on a slow clock so items still age out of the window.
+    this.entityRefreshMs = options.entityRefreshMs || 300000;
+    this.lastEntityRollAt = 0;
     this.leaseSeconds = options.leaseSeconds || 120;
     this.dryRun = options.dryRun ?? config.dryRun;
     this.startedAt = new Date().toISOString();
@@ -171,9 +175,19 @@ class NewsWorker {
     }
   }
 
-  async runOnce() {
+  async runOnce(options = {}) {
+    const force = options.force === true;
     const drained = await this.drain();
+
+    const due = Date.now() - this.lastEntityRollAt >= this.entityRefreshMs;
+    if (!force && drained.processed === 0 && !due) {
+      // Nothing new and the window is still fresh: skip the rollup instead of rewriting an
+      // identical snapshot on every poll.
+      return { ...drained, entities: 0, items: 0, skippedRoll: true };
+    }
+
     const entities = await this.recomputeEntities();
+    if (!entities.error) this.lastEntityRollAt = Date.now();
     return { ...drained, ...entities };
   }
 }

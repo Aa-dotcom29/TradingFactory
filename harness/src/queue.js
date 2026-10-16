@@ -114,9 +114,10 @@ async function purgeDone(olderThanDays = 7) {
 
 // Queue messages are ephemeral notifications: the durable record always lives in a
 // partitioned table (news_items, features, ...). A notification that no consumer has claimed
-// within hours is worthless - it cannot be acted on late - so it is dropped rather than
-// allowed to grow without bound while a downstream stage is still unbuilt.
-async function purgeStalePending(olderThanHours = 6) {
+// within a couple of hours is worthless - it cannot be acted on late - so it is dropped rather
+// than allowed to grow without bound while a downstream stage is still unbuilt. The window is
+// two orders of magnitude longer than the drain interval, so a slow consumer is safe.
+async function purgeStalePending(olderThanHours = 2) {
   const sql = requireDb();
   const rows = await sql`
     delete from queue_messages
