@@ -9,6 +9,13 @@ function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+// Dev-only shortcut. When AUTH_DISABLED=true AND we are definitely not running in production,
+// skip the database session check entirely. Guarded by NODE_ENV so this can never be used
+// to expose a production instance - 'npm start' ignores it even if the flag is mis-set.
+export function authDisabled() {
+  return process.env.AUTH_DISABLED === 'true' && process.env.NODE_ENV !== 'production';
+}
+
 export async function createSession(profileId) {
   const sql = db();
   if (!sql) throw new Error('DATABASE_URL is not configured');
@@ -41,7 +48,29 @@ export async function destroySession() {
 
 // Verifies the cookie against the sessions table and returns the profile + household,
 // or null. Also prunes the odd expired row and refreshes last_seen_at opportunistically.
+// When AUTH_DISABLED is on (dev only), short-circuits to the first profile so the dashboard
+// can be used without a login session - never in production.
 export async function getCurrentUser() {
+  if (authDisabled()) {
+    const sql = db();
+    if (sql) {
+      const rows = await sql`
+        select p.id as profile_id,
+               p.id as session_id,
+               p.email,
+               p.role,
+               p.household_id,
+               h.name as household_name
+        from profiles p
+        join households h on h.id = p.household_id
+        order by p.created_at asc
+        limit 1
+      `.catch(() => []);
+      if (rows.length) return rows[0];
+    }
+    return { profile_id: null, session_id: null, email: 'dev@local', role: 'owner',
+             household_name: 'Dev (no database configured)', household_id: null };
+  }
   const sql = db();
   if (!sql) return null;
   const store = await cookies();
