@@ -1,12 +1,13 @@
 import { notFound } from 'next/navigation';
 import {
   getSignals, getFlow, getNews, getEntityFeatures, getFlowFeatures, getBias,
-  getSignalStages, getSignalCandidates,
+  getSignalStages, getSignalCandidates, getRiskDecisions,
 } from '@/lib/queries';
 import { horizonByKey } from '@/lib/horizons';
 import SignalList from '@/components/SignalList';
 import SignalStages from '@/components/SignalStages';
 import SignalCandidates from '@/components/SignalCandidates';
+import RiskDecisions from '@/components/RiskDecisions';
 import FlowPanel, { FlowUnderlyings } from '@/components/FlowPanel';
 import EntityIntel from '@/components/EntityIntel';
 import FlowFeatures from '@/components/FlowFeatures';
@@ -26,7 +27,7 @@ export default async function HorizonPage({ params }) {
   const horizon = horizonByKey(raw);
   if (!horizon) notFound();
 
-  const [signals, flow, news, entityData, flowFeatures, bias, stages, candidates] = await Promise.all([
+  const [signals, flow, news, entityData, flowFeatures, bias, stages, candidates, riskDecisions] = await Promise.all([
     getSignals(horizon.key),
     getFlow(horizon.key === 'POSITIONAL' ? 12 : 20),
     getNews(20),
@@ -35,6 +36,7 @@ export default async function HorizonPage({ params }) {
     getBias(horizon.key, 12),
     getSignalStages(horizon.key, 12),
     getSignalCandidates(horizon.key, 10),
+    getRiskDecisions(horizon.key, 8),
   ]);
 
   return (
@@ -84,6 +86,16 @@ export default async function HorizonPage({ params }) {
         <h2>Published signals</h2>
         <p className="hint">Risk-gated, versioned signals delivered to the household.</p>
         <SignalList signals={signals} horizonLabel={horizon.label.toLowerCase()} />
+      </section>
+
+      <section className="card">
+        <h2>Risk gate</h2>
+        <p className="hint">
+          The gate's judgements on this horizon's candidates, each with the check list behind it.
+          A candidate is only published once every gate passes; a deferred row means the market
+          was closed.
+        </p>
+        <RiskDecisions decisions={riskDecisions} />
       </section>
 
       {horizon.flow ? (

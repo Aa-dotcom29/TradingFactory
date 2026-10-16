@@ -11,6 +11,8 @@
 //   w2            - flow features
 //   w3            - bias meter
 //   w4            - signal builder (lifecycle + candidates)
+//   w5            - risk gate
+//   w6            - publisher (Telegram, shadow-first)
 //   w8            - supervisor
 // Splitting roles lets a busy worker scale out later without changing the code.
 
@@ -22,9 +24,11 @@ const { NewsWorker } = require('./workers/w1-news');
 const { FlowWorker } = require('./workers/w2-flow');
 const { BiasWorker } = require('./workers/w3-bias');
 const { SignalWorker } = require('./workers/w4-signals');
+const { RiskWorker } = require('./workers/w5-risk');
+const { PublishWorker } = require('./workers/w6-publish');
 const { Supervisor } = require('./workers/w8-supervisor');
 
-const ROLES = ['all', 'w0', 'w1', 'w2', 'w3', 'w4', 'w8'];
+const ROLES = ['all', 'w0', 'w1', 'w2', 'w3', 'w4', 'w5', 'w6', 'w8'];
 
 function parseArgs(argv) {
   const flags = { once: false, dry: false, role: null };
@@ -41,7 +45,7 @@ function parseArgs(argv) {
 const ACTIVITY_KEYS = [
   'processed', 'duplicates', 'failed', 'entities', 'items', 'symbols',
   'quotes', 'rows', 'queued', 'purged', 'purgedStale', 'persisted', 'emitted',
-  'candidates', 'superseded', 'stages',
+  'candidates', 'superseded', 'stages', 'approved', 'rejected', 'deferred', 'published',
 ];
 
 function idleTick(result) {
@@ -105,6 +109,8 @@ async function main() {
   const flowWorker = has('w2') ? new FlowWorker() : null;
   const bias = has('w3') ? new BiasWorker() : null;
   const signals = has('w4') ? new SignalWorker() : null;
+  const risk = has('w5') ? new RiskWorker() : null;
+  const publisher = has('w6') ? new PublishWorker() : null;
   const supervisor = has('w8') ? new Supervisor() : null;
 
   const timers = [];
@@ -124,6 +130,8 @@ async function main() {
     if (flowWorker) log.info('flow result', await flowWorker.runOnce());
     if (bias) log.info('bias result', await bias.runOnce({ force: true }));
     if (signals) log.info('signal result', await signals.runOnce({ force: true }));
+    if (risk) log.info('risk result', await risk.runOnce({ force: true }));
+    if (publisher) log.info('publish result', await publisher.runOnce());
     if (supervisor) {
       await supervisor.heartbeat();
       await supervisor.housekeeping();
@@ -154,6 +162,14 @@ async function main() {
   if (signals) {
     await signals.runOnce({ force: true });
     timers.push(setInterval(makeGuard('signal-worker', () => signals.runOnce()), config.poll.scoreMs));
+  }
+  if (risk) {
+    await risk.runOnce({ force: true });
+    timers.push(setInterval(makeGuard('risk-gate', () => risk.runOnce()), config.poll.scoreMs));
+  }
+  if (publisher) {
+    await publisher.runOnce();
+    timers.push(setInterval(makeGuard('publisher', () => publisher.runOnce()), config.poll.scoreMs));
   }
   if (supervisor) {
     await supervisor.heartbeat();

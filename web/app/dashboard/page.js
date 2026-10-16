@@ -1,4 +1,4 @@
-import { getHealth, getNews, getFlow, getEntityFeatures, getFlowFeatures, getBiasOverview, getSignalStageOverview, getSignalCandidates } from '@/lib/queries';
+import { getHealth, getNews, getFlow, getEntityFeatures, getFlowFeatures, getBiasOverview, getSignalStageOverview, getSignalCandidates, getRiskDecisions } from '@/lib/queries';
 import NewsList from '@/components/NewsList';
 import FlowPanel, { FlowUnderlyings } from '@/components/FlowPanel';
 import EntityIntel from '@/components/EntityIntel';
@@ -6,6 +6,7 @@ import FlowFeatures from '@/components/FlowFeatures';
 import BiasPanel from '@/components/BiasPanel';
 import SignalStages from '@/components/SignalStages';
 import SignalCandidates from '@/components/SignalCandidates';
+import RiskDecisions from '@/components/RiskDecisions';
 import HealthTable from '@/components/HealthTable';
 
 export const dynamic = 'force-dynamic';
@@ -13,7 +14,7 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Overview - Trading Factory' };
 
 export default async function OverviewPage() {
-  const [health, news, flow, entityData, flowFeatures, bias, lifecycle, candidates] = await Promise.all([
+  const [health, news, flow, entityData, flowFeatures, bias, lifecycle, candidates, riskDecisions] = await Promise.all([
     getHealth(),
     getNews(12),
     getFlow(10),
@@ -22,6 +23,7 @@ export default async function OverviewPage() {
     getBiasOverview(6),
     getSignalStageOverview(6),
     getSignalCandidates(null, 4),
+    getRiskDecisions(null, 6),
   ]);
   const counts = health.counts || {};
   const biasCounts = bias.counts || {};
@@ -71,6 +73,18 @@ export default async function OverviewPage() {
           <div className="k">Candidates pending</div>
           <div className="v mono">{counts.candidates_pending ?? 0}</div>
         </div>
+        <div className="stat">
+          <div className="k">Gate approved (24h)</div>
+          <div className="v mono">{counts.risk_approved_24h ?? 0}</div>
+        </div>
+        <div className="stat">
+          <div className="k">Gate rejected (24h)</div>
+          <div className="v mono">{counts.risk_rejected_24h ?? 0}</div>
+        </div>
+        <div className="stat">
+          <div className="k">Shadow signals (24h)</div>
+          <div className="v mono">{counts.signals_shadow_24h ?? 0}</div>
+        </div>
       </div>
 
       <section className="card">
@@ -93,6 +107,16 @@ export default async function OverviewPage() {
         <div className="hr" />
         <p className="hint">Most recent trade candidates awaiting the risk gate.</p>
         <SignalCandidates candidates={candidates} showHorizon />
+      </section>
+
+      <section className="card">
+        <h2>Risk gate</h2>
+        <p className="hint">
+          Every judgement the gate has made on a trade candidate, with the check list behind it.
+          Nothing is published unless every gate passes; a deferred row means the market was
+          closed, not that anything failed.
+        </p>
+        <RiskDecisions decisions={riskDecisions} showHorizon />
       </section>
 
       <div className="grid cols-2">

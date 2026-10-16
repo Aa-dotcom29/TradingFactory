@@ -28,10 +28,10 @@ Sources                      Harness worker (always-on)                    Chann
 -------                      --------------------------                    --------
 Angel One REST (quotes,      W0 ingest -> Postgres + queue
   greeks, instrument master)   |                +--> W1 news / W2 flow (Slice 2)
-NSE (OI spurts, option         |                +--> W3 bias (Slice 3) -> W4 signals (Slice 4)
-  chain; cookie-primed)        |                +--> later: W5..W7
-RSS feeds (ET, BS, MC,       W8 supervisor (health, queue, freshness)
-  Google News)
+NSE (OI spurts, option         |                +--> W3 bias (Sl 3) -> W4 signals (Sl 4)
+  chain; cookie-primed)        |                +--> W5 risk (Sl 5) -> W6 publish (Sl 5)
+RSS feeds (ET, BS, MC,       W8 supervisor (health, queue, freshness)     Telegram
+  Google News)                                                             (shadow-first)
                              Postgres: partitioned time-series + queue + signals
 ```
 
@@ -65,8 +65,8 @@ Workers and what they own:
 | W2 analyser | flow features per symbol (news<->OI<->price correlation moves to W3) | feature.snapshot |
 | W3 bias | weighted ensemble verdict | bias.verdict |
 | W4 signal | strike/premium/entry/target/stop, liquidity | signal.candidate |
-| W5 risk | non-bypassable gates + sizing | signal.approved / signal.rejected |
-| W6 publish | Telegram + dashboard + immutable snapshot | signal.published |
+| W5 risk | non-bypassable gates, exposure and loss controls | signal.approved / signal.rejected |
+| W6 publish | immutable snapshot + Telegram delivery (shadow-first) | signal.published |
 | W7 evaluator | outcomes, hit-rate, calibration | evaluate.signal |
 | W8 supervisor | health, queue, freshness, housekeeping | sources_health |
 
@@ -82,11 +82,14 @@ Workers and what they own:
   Without those, backtests and self-learning are meaningless.
 - `config_registry` stores candidate configs from the learning loop; only a human approval
   moves one to `approved`. Nothing is auto-promoted.
-- Config rows carry a `family` (`bias`, `signal`, ...). Each worker resolves "the latest approved
-  config" **within its own family**, so one stage can never load another stage's weights.
+- Config rows carry a `family` (`bias`, `signal`, `risk`, ...). Each worker resolves "the latest
+  approved config" **within its own family**, so one stage can never load another stage's weights.
 - `signal_stages` is an append-only lifecycle log (partitioned monthly); the current stage for a
   symbol and horizon is its latest row. `signal_candidates` holds proposals awaiting the risk
-  gate and is separate from `signals`, which only ever holds published trades.
+  gate and is separate from `signals`, which only ever holds risk-approved trades.
+- `risk_decisions` is the gate's audit trail: one row per judgement, carrying the candidate, the
+  verdict and the full check list. `signal_events` logs what happened to a published signal
+  (published, delivered, delivery failed).
 
 ## Rule engine (Slice 2)
 
@@ -108,7 +111,7 @@ Both functions are pure (no network, no DB, no LLM), so a signal can always be e
 stored inputs and replayed offline. Neither emits a direction: turning these features into a
 verdict is W3's job.
 
-## Worker responsibilities (Slice 2 through Slice 4 as built)
+## Worker responsibilities (Slice 2 through Slice 5 as built)
 
 | Worker | Consumes | Produces |
 |---|---|---|
@@ -117,10 +120,13 @@ verdict is W3's job.
 | W2 flow | `flow.snapshot` | `features` set `flow.v1`; enqueues `feature.snapshot` |
 | W3 bias | `news.scored`, `feature.snapshot` (triggers only) | `bias_verdicts`; enqueues `bias.verdict` |
 | W4 signals | `bias.verdict` (triggers only) | `signal_stages`, `signal_candidates`; enqueues `signal.candidate` |
+| W5 risk | `signal.candidate` (triggers only) | `risk_decisions`; candidate status; enqueues `signal.approved` |
+| W6 publish | `signal.approved` (triggers only) | `signals`, `signal_events`; Telegram delivery (shadow unless `PUBLISH_MODE=live`) |
 | W8 supervisor | (read-only) | `sources_health` heartbeat, queue housekeeping |
 
 A work queue is not pub/sub, so the topics above are consumed by exactly one stage each: W2
-takes `flow.snapshot`, W3 takes `feature.snapshot`, W4 takes `bias.verdict`.
+takes `flow.snapshot`, W3 takes `feature.snapshot`, W4 takes `bias.verdict`, W5 takes
+`signal.candidate`, W6 takes `signal.approved`.
 
 ## Bias meter (Slice 3)
 
@@ -169,6 +175,41 @@ W2's remaining job - correlating news against OI and price - lands with the sign
 surfaces outlier strikes rather than the at-the-money ones. Until a chain feature set is wired in
 (NSE `option-chain-*` or Angel `optionGreek`), most plans are the honest underlying level plan.
 The fix only needs a better candidate list in `selectContract`.
+
+## Risk gate and publisher (Slice 5)
+
+`risk.js` decides whether a candidate may be shown to the household at all; `telegram.js` composes
+the message. Both are pure apart from the outbound HTTP call.
+
+- The gate is **fail-closed**: a missing input is never an approval. A check that cannot be
+  evaluated because the data does not exist reports `SKIPPED` and says why, so "we could not check
+  this" is never silently the same as "this passed". Fourteen checks run: gate enabled, kill
+  switch, known horizon, session, freshness, confidence floor, reward:risk floor, liquidity, open
+  positions in the horizon, per-symbol exposure, duplicate window, consecutive-loss halt,
+  post-loss cooldown and the daily loss limit.
+- A candidate ends `APPROVED`, `REJECTED` or `DEFERRED`. `DEFERRED` means nothing failed and the
+  market is simply shut (the NSE session and weekday check run on an explicit IST offset, so the
+  host timezone is irrelevant); the proposal stays pending and is re-evaluated on the next tick. A
+  failure always outranks a deferral.
+- Loss controls need closed trades, which only exist once the evaluator (W7) runs. Until then they
+  report `SKIPPED` rather than pretending to have checked - they are wired and unit-tested, just
+  not yet fed.
+- Limits live in `config_registry` under the `risk` family (`risk-v1`, registered on first run).
+  The gate is read in the worker; **no dashboard route writes these limits**, so it cannot be
+  relaxed from the UI.
+- Publishing is **shadow-first**. `PUBLISH_MODE` defaults to `shadow`: the exact Telegram message
+  is composed and logged, the immutable `signals` row and its `signal_events` are written with
+  `snapshot.mode = shadow`, and nothing is sent. Only `PUBLISH_MODE=live` calls the Bot API.
+- Delivery is retried through the queue (a failure `nack`s the message) and is idempotent: the
+  signal row is keyed on the candidate's dedupe key, and an already-delivered signal is never
+  re-sent. W6 also scans for approved candidates with no signal row, so a lost notification cannot
+  strand an approved trade.
+
+**Open-position ledger caveat.** Until W7 can close a position, published signals *are* the
+open-position ledger, counted over a horizon-specific window (`holdingDays`). Per-symbol exposure
+is capped at one, so in the meantime a symbol that has already been signalled will not be
+signalled again inside that window. That is deliberate while there is no exit path, and it is the
+first thing W7 should replace.
 
 ## Optional LLM
 

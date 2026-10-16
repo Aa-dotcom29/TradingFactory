@@ -20,6 +20,12 @@ export async function getHealth() {
         (select count(*)::int from oi_spurts where captured_at > now() - interval '24 hours') as flow_24h,
         (select count(*)::int from signals) as signals_total,
         (select count(*)::int from signals where published_at > now() - interval '24 hours') as signals_24h,
+        (select count(*)::int from signals
+          where published_at > now() - interval '24 hours' and snapshot->>'mode' = 'shadow') as signals_shadow_24h,
+        (select count(*)::int from risk_decisions
+          where evaluated_at > now() - interval '24 hours' and decision = 'APPROVED') as risk_approved_24h,
+        (select count(*)::int from risk_decisions
+          where evaluated_at > now() - interval '24 hours' and decision = 'REJECTED') as risk_rejected_24h,
         (select count(*)::int from signal_candidates where status = 'pending_risk') as candidates_pending,
         (select count(*)::int from (
           select distinct on (horizon, symbol) horizon, symbol, stage from signal_stages
@@ -95,7 +101,7 @@ export async function getSignals(horizon, limit = 25) {
     return await sql`
       select id, horizon, strategy, symbol, direction, instrument, strike, option_type,
              entry, target, stop, rr, probability, confidence, published_at,
-             strategy_version, engine_version
+             strategy_version, engine_version, snapshot->>'mode' as mode
       from signals
       where horizon = ${horizon}
       order by published_at desc
@@ -295,6 +301,38 @@ export async function getSignalCandidates(horizon = null, limit = 10) {
              expiry, entry, target, stop, rr, confidence, score, liquidity_ok, status, reasons
       from signal_candidates
       order by created_at desc
+      limit ${limit}
+    `;
+  } catch {
+    return [];
+  }
+}
+
+// Slice 5: the gate's own audit trail. Every terminal decision carries the full check list, so
+// "why was this rejected" is answered gate by gate rather than with a single reason string.
+export async function getRiskDecisions(horizon = null, limit = 12) {
+  const sql = db();
+  if (!sql) return [];
+  try {
+    if (horizon) {
+      return await sql`
+        select d.id, d.evaluated_at, d.horizon, d.decision, d.passed, d.reasons, d.config_version,
+               d.payload, c.symbol, c.direction, c.kind, c.instrument, c.strike, c.option_type,
+               c.entry, c.target, c.stop, c.rr, c.confidence, c.status as candidate_status
+        from risk_decisions d
+        left join signal_candidates c on c.id = d.candidate_id
+        where d.horizon = ${horizon}
+        order by d.evaluated_at desc
+        limit ${limit}
+      `;
+    }
+    return await sql`
+      select d.id, d.evaluated_at, d.horizon, d.decision, d.passed, d.reasons, d.config_version,
+             d.payload, c.symbol, c.direction, c.kind, c.instrument, c.strike, c.option_type,
+             c.entry, c.target, c.stop, c.rr, c.confidence, c.status as candidate_status
+      from risk_decisions d
+      left join signal_candidates c on c.id = d.candidate_id
+      order by d.evaluated_at desc
       limit ${limit}
     `;
   } catch {

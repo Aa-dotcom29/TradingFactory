@@ -13,6 +13,8 @@ import {
   scoreTone,
   stageTone,
   candidateStatusTone,
+  decisionTone,
+  publishModeTone,
   istStamp,
   timeAgo,
 } from '../lib/format.js';
@@ -80,6 +82,16 @@ test('stage and candidate tones keep READY distinct from "forming"', () => {
   assert.equal(candidateStatusTone('approved'), 'up');
   assert.equal(candidateStatusTone('rejected'), 'down');
   assert.equal(candidateStatusTone('superseded'), 'muted');
+});
+
+test('risk decisions colour only an approval as a green light', () => {
+  assert.equal(decisionTone('APPROVED'), 'up');
+  assert.equal(decisionTone('REJECTED'), 'down');
+  // A deferral is "nothing failed, the market is shut" - neither a pass nor a failure.
+  assert.equal(decisionTone('DEFERRED'), 'warn');
+  assert.equal(decisionTone(undefined), 'muted');
+  assert.equal(publishModeTone('shadow'), 'warn');
+  assert.equal(publishModeTone('live'), 'accent');
 });
 
 test('istStamp renders in Asia/Kolkata, not local time', () => {

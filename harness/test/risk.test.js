@@ -1,0 +1,350 @@
+'use strict';
+
+// Slice 5 risk gate. Pure functions, so these run with no network and no database.
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const {
+  DEFAULT_RISK_CONFIG,
+  resolveRiskConfig,
+  horizonValue,
+  marketSession,
+  istClock,
+  summariseExposure,
+  summariseOutcomes,
+  lossStreak,
+  evaluateRisk,
+} = require('../src/risk');
+
+const config = resolveRiskConfig(null);
+
+// 2026-10-14 is a Wednesday; 2026-10-17 is a Saturday.
+const WED_1030_IST = Date.parse('2026-10-14T05:00:00Z');
+const WED_0830_IST = Date.parse('2026-10-14T03:00:00Z');
+const WED_1600_IST = Date.parse('2026-10-14T10:30:00Z');
+const SAT_1030_IST = Date.parse('2026-10-17T05:00:00Z');
+
+function candidate(overrides = {}) {
+  return {
+    id: 'cand-1',
+    as_of: new Date(WED_1030_IST - 5 * 60000).toISOString(),
+    horizon: 'SWING',
+    symbol: 'NIFTY',
+    direction: 'BULLISH',
+    confidence: 0.6,
+    rr: 2,
+    liquidity_ok: true,
+    dedupe_key: 'SWING|NIFTY|BULLISH|SPOT|X|X|2026-10-14T05:00',
+    ...overrides,
+  };
+}
+
+function context(overrides = {}) {
+  return {
+    session: { open: true, reason: null },
+    exposure: { byHorizon: {}, bySymbol: {}, lastPublished: {} },
+    outcomes: { consecutiveLosses: null, dailyPnlPct: null, lastLossAt: null },
+    ...overrides,
+  };
+}
+
+function gate(result, name) {
+  return result.checks.find((check) => check.gate === name);
+}
+
+test('resolveRiskConfig merges a partial stored config over the baseline', () => {
+  const merged = resolveRiskConfig({
+    version: 'risk-v9',
+    gates: {
+      minConfidence: 0.75,
+      maxOpenPositions: { INTRADAY: 2 },
+      session: { enforce: false },
+    },
+  });
+  assert.equal(merged.version, 'risk-v9');
+  assert.equal(merged.gates.minConfidence, 0.75);
+  assert.equal(merged.gates.maxOpenPositions.INTRADAY, 2);
+  assert.equal(merged.gates.maxOpenPositions.SWING, DEFAULT_RISK_CONFIG.gates.maxOpenPositions.SWING);
+  assert.equal(merged.gates.session.enforce, false);
+  assert.equal(merged.gates.session.openMinutes, DEFAULT_RISK_CONFIG.gates.session.openMinutes);
+});
+
+test('resolveRiskConfig tolerates junk without throwing', () => {
+  assert.equal(resolveRiskConfig(null).version, DEFAULT_RISK_CONFIG.version);
+  assert.equal(resolveRiskConfig('nonsense').gates.minConfidence, DEFAULT_RISK_CONFIG.gates.minConfidence);
+  assert.equal(resolveRiskConfig({ gates: 'nope' }).gates.session.closeMinutes, 930);
+  assert.equal(resolveRiskConfig({ gates: { maxOpenPositions: 'nope' } }).gates.maxOpenPositions.SWING, 8);
+});
+
+test('horizonValue reads the horizon key and falls back safely', () => {
+  assert.equal(horizonValue({ INTRADAY: 0.5 }, 'INTRADAY', 0.1), 0.5);
+  assert.equal(horizonValue({ INTRADAY: 0.5 }, 'SWING', 0.1), 0.1);
+  assert.equal(horizonValue(null, 'SWING', 0.1), 0.1);
+  assert.equal(horizonValue({ INTRADAY: 'junk' }, 'INTRADAY', 0.1), 0.1);
+});
+
+test('istClock reports the weekday and IST minutes, not the host timezone', () => {
+  const clock = istClock(WED_1030_IST);
+  assert.equal(clock.weekday, 3);
+  assert.equal(clock.minutes, 630); // 10:30
+  assert.equal(clock.date, '2026-10-14');
+});
+
+test('marketSession opens inside the NSE window and closes outside it', () => {
+  assert.equal(marketSession(WED_1030_IST, config.gates.session).open, true);
+  assert.equal(marketSession(WED_0830_IST, config.gates.session).open, false);
+  assert.equal(marketSession(WED_0830_IST, config.gates.session).reason.includes('before'), true);
+  assert.equal(marketSession(WED_1600_IST, config.gates.session).open, false);
+  assert.equal(marketSession(WED_1600_IST, config.gates.session).reason.includes('after'), true);
+});
+
+test('marketSession keeps the weekend closed and names it', () => {
+  const session = marketSession(SAT_1030_IST, config.gates.session);
+  assert.equal(session.open, false);
+  assert.equal(session.reason.includes('weekend'), true);
+});
+
+test('lossStreak reports null for no history and counts back to the first win', () => {
+  assert.equal(lossStreak([]), null);
+  assert.equal(lossStreak(null), null);
+  assert.equal(lossStreak([{ pnl_pct: -1 }, { pnl_pct: -2 }, { pnl_pct: 3 }]), 2);
+  assert.equal(lossStreak([{ pnl_pct: 1 }]), 0);
+  assert.equal(lossStreak([{ result: 'STOPPED_OUT' }, { result: 'TARGET_HIT' }]), 1);
+});
+
+test('summariseExposure counts only positions inside the holding window', () => {
+  const now = Date.parse('2026-10-14T05:00:00Z');
+  const rows = [
+    // Intraday from two days ago: outside a 1-day window.
+    { horizon: 'INTRADAY', symbol: 'NIFTY', direction: 'BULLISH', published_at: new Date(now - 2 * 86400000).toISOString() },
+    // Swing from a week ago: inside the 30-day window.
+    { horizon: 'SWING', symbol: 'NIFTY', direction: 'BULLISH', published_at: new Date(now - 7 * 86400000).toISOString() },
+    { horizon: 'SWING', symbol: 'TCS', direction: 'BEARISH', published_at: new Date(now - 86400000).toISOString() },
+  ];
+  const exposure = summariseExposure(rows, config, now);
+  assert.equal(exposure.byHorizon.INTRADAY, undefined);
+  assert.equal(exposure.byHorizon.SWING, 2);
+  assert.equal(exposure.bySymbol['SWING|NIFTY'], 1);
+  assert.equal(exposure.lastPublished['SWING|NIFTY|BULLISH'] !== undefined, true);
+});
+
+test('summariseOutcomes withholds a daily number when nothing closed today', () => {
+  const empty = summariseOutcomes([], 0, null, 0);
+  assert.equal(empty.consecutiveLosses, null);
+  assert.equal(empty.dailyPnlPct, null);
+  const fed = summariseOutcomes([{ pnl_pct: -1 }], -1.5, '2026-10-14T05:00:00Z', 2);
+  assert.equal(fed.consecutiveLosses, 1);
+  assert.equal(fed.dailyPnlPct, -1.5);
+  assert.equal(fed.lastLossAt, '2026-10-14T05:00:00Z');
+});
+
+test('a complete, liquid, fresh candidate is approved and uncheckable gates say so', () => {
+  const result = evaluateRisk({ candidate: candidate(), context: context(), config, now: WED_1030_IST });
+  assert.equal(result.decision, 'APPROVED');
+  assert.equal(result.approved, true);
+  assert.deepEqual(result.reasons, ['every risk gate passed']);
+  assert.equal(result.configVersion, 'risk-v1');
+  // No closed trades exist yet, so the loss controls are honest SKIPPEDs rather than passes.
+  assert.equal(gate(result, 'consecutiveLossHalt').status, 'SKIPPED');
+  assert.equal(gate(result, 'dailyLossLimit').status, 'SKIPPED');
+  assert.equal(gate(result, 'cooldownAfterLoss').status, 'SKIPPED');
+  assert.equal(gate(result, 'liquidity').status, 'PASS');
+});
+
+test('a candidate below the confidence floor is rejected', () => {
+  const result = evaluateRisk({
+    candidate: candidate({ confidence: 0.2 }), context: context(), config, now: WED_1030_IST,
+  });
+  assert.equal(result.decision, 'REJECTED');
+  assert.deepEqual(result.failures, ['confidence']);
+  assert.equal(result.reasons[0].startsWith('confidence:'), true);
+});
+
+test('a candidate with no confidence or no reward:risk is rejected, never approved', () => {
+  const noConfidence = evaluateRisk({
+    candidate: candidate({ confidence: null }), context: context(), config, now: WED_1030_IST,
+  });
+  assert.equal(noConfidence.decision, 'REJECTED');
+  const noRr = evaluateRisk({
+    candidate: candidate({ rr: null }), context: context(), config, now: WED_1030_IST,
+  });
+  assert.equal(noRr.decision, 'REJECTED');
+  assert.equal(noRr.failures.includes('rewardRisk'), true);
+});
+
+test('a candidate whose plan missed the liquidity floor is rejected', () => {
+  const result = evaluateRisk({
+    candidate: candidate({ liquidity_ok: false }), context: context(), config, now: WED_1030_IST,
+  });
+  assert.equal(result.decision, 'REJECTED');
+  assert.equal(result.failures.includes('liquidity'), true);
+});
+
+test('the kill switch and a disabled gate both fail closed', () => {
+  const killed = resolveRiskConfig({ gates: { killSwitch: true } });
+  const result = evaluateRisk({ candidate: candidate(), context: context(), config: killed, now: WED_1030_IST });
+  assert.equal(result.decision, 'REJECTED');
+  assert.equal(result.failures.includes('killSwitch'), true);
+
+  const off = resolveRiskConfig({ gates: { enabled: false } });
+  const disabled = evaluateRisk({ candidate: candidate(), context: context(), config: off, now: WED_1030_IST });
+  assert.equal(disabled.decision, 'REJECTED');
+  assert.equal(disabled.failures.includes('enabled'), true);
+});
+
+test('an unknown horizon is rejected before anything else is trusted', () => {
+  const result = evaluateRisk({
+    candidate: candidate({ horizon: 'WEEKLY' }), context: context(), config, now: WED_1030_IST,
+  });
+  assert.equal(result.decision, 'REJECTED');
+  assert.equal(result.failures.includes('horizon'), true);
+});
+
+test('a candidate raised outside the session is deferred, not rejected', () => {
+  const result = evaluateRisk({
+    candidate: candidate(),
+    context: context({ session: { open: false, reason: 'after the NSE close (09:15-15:30 IST)' } }),
+    config,
+    now: WED_1030_IST,
+  });
+  assert.equal(result.decision, 'DEFERRED');
+  assert.equal(result.approved, false);
+  assert.deepEqual(result.deferred, ['session']);
+  assert.equal(result.reasons[0].startsWith('session:'), true);
+});
+
+test('a real failure outranks a deferral', () => {
+  const result = evaluateRisk({
+    candidate: candidate({ confidence: 0.1 }),
+    context: context({ session: { open: false, reason: 'weekend' } }),
+    config,
+    now: WED_1030_IST,
+  });
+  assert.equal(result.decision, 'REJECTED');
+});
+
+test('session enforcement can be switched off in config and says so', () => {
+  const relaxed = resolveRiskConfig({ gates: { session: { enforce: false } } });
+  const result = evaluateRisk({
+    candidate: candidate(),
+    context: context({ session: { open: false, reason: 'weekend' } }),
+    config: relaxed,
+    now: WED_1030_IST,
+  });
+  assert.equal(result.decision, 'APPROVED');
+  assert.equal(gate(result, 'session').status, 'SKIPPED');
+});
+
+test('a stale candidate is rejected', () => {
+  const result = evaluateRisk({
+    candidate: candidate({ as_of: new Date(WED_1030_IST - 3 * 86400000).toISOString() }),
+    context: context(),
+    config,
+    now: WED_1030_IST,
+  });
+  assert.equal(result.decision, 'REJECTED');
+  assert.equal(result.failures.includes('freshness'), true);
+});
+
+test('a candidate with no timestamp is rejected rather than waved through', () => {
+  const result = evaluateRisk({
+    candidate: candidate({ as_of: null, created_at: null }),
+    context: context(),
+    config,
+    now: WED_1030_IST,
+  });
+  assert.equal(result.decision, 'REJECTED');
+  assert.equal(result.failures.includes('freshness'), true);
+});
+
+test('the exposure caps reject a name that is already at the limit', () => {
+  const horizonFull = evaluateRisk({
+    candidate: candidate(),
+    context: context({
+      exposure: { byHorizon: { SWING: 8 }, bySymbol: {}, lastPublished: {} },
+    }),
+    config,
+    now: WED_1030_IST,
+  });
+  assert.equal(horizonFull.decision, 'REJECTED');
+  assert.equal(horizonFull.failures.includes('openPositions'), true);
+
+  const symbolFull = evaluateRisk({
+    candidate: candidate(),
+    context: context({
+      exposure: { byHorizon: { SWING: 1 }, bySymbol: { 'SWING|NIFTY': 1 }, lastPublished: {} },
+    }),
+    config,
+    now: WED_1030_IST,
+  });
+  assert.equal(symbolFull.decision, 'REJECTED');
+  assert.equal(symbolFull.failures.includes('symbolExposure'), true);
+});
+
+test('a repeat of a call published minutes ago is suppressed', () => {
+  const result = evaluateRisk({
+    candidate: candidate(),
+    context: context({
+      exposure: {
+        byHorizon: { SWING: 1 },
+        bySymbol: { 'SWING|NIFTY': 1 },
+        lastPublished: { 'SWING|NIFTY|BULLISH': new Date(WED_1030_IST - 5 * 60000).toISOString() },
+      },
+    }),
+    config,
+    now: WED_1030_IST,
+  });
+  assert.equal(result.decision, 'REJECTED');
+  assert.equal(result.failures.includes('duplicateWindow'), true);
+});
+
+test('the loss controls reject once the history feeds them', () => {
+  const halting = evaluateRisk({
+    candidate: candidate(),
+    context: context({ outcomes: { consecutiveLosses: 3, dailyPnlPct: 0, lastLossAt: null } }),
+    config,
+    now: WED_1030_IST,
+  });
+  assert.equal(halting.decision, 'REJECTED');
+  assert.equal(halting.failures.includes('consecutiveLossHalt'), true);
+
+  const cooled = evaluateRisk({
+    candidate: candidate(),
+    context: context({
+      outcomes: { consecutiveLosses: 1, dailyPnlPct: 0, lastLossAt: new Date(WED_1030_IST - 5 * 60000).toISOString() },
+    }),
+    config,
+    now: WED_1030_IST,
+  });
+  assert.equal(cooled.decision, 'REJECTED');
+  assert.equal(cooled.failures.includes('cooldownAfterLoss'), true);
+
+  const daily = evaluateRisk({
+    candidate: candidate(),
+    context: context({ outcomes: { consecutiveLosses: 1, dailyPnlPct: -4, lastLossAt: null } }),
+    config,
+    now: WED_1030_IST,
+  });
+  assert.equal(daily.decision, 'REJECTED');
+  assert.equal(daily.failures.includes('dailyLossLimit'), true);
+});
+
+test('an empty context still yields a decision rather than throwing', () => {
+  const result = evaluateRisk({ candidate: candidate(), context: {}, config, now: WED_1030_IST });
+  assert.equal(['APPROVED', 'REJECTED', 'DEFERRED'].includes(result.decision), true);
+});
+
+test('the verdict is deterministic for the same inputs', () => {
+  const first = evaluateRisk({ candidate: candidate(), context: context(), config, now: WED_1030_IST });
+  const second = evaluateRisk({ candidate: candidate(), context: context(), config, now: WED_1030_IST });
+  assert.deepEqual(first, second);
+});
+
+test('every check carries a known status and a detail line', () => {
+  const result = evaluateRisk({ candidate: candidate(), context: context(), config, now: WED_1030_IST });
+  assert.equal(result.checks.length >= 12, true);
+  for (const check of result.checks) {
+    assert.equal(['PASS', 'FAIL', 'DEFER', 'SKIPPED'].includes(check.status), true);
+    assert.equal(typeof check.detail, 'string');
+    assert.equal(check.detail.length > 0, true);
+  }
+});

@@ -62,7 +62,7 @@ const config = {
   env: process.env.NODE_ENV || 'development',
   dryRun: bool(process.env.HARNESS_DRY_RUN, false),
   once: bool(process.env.HARNESS_ONCE, false),
-  role: process.env.HARNESS_ROLE || 'all', // all | w0 | w1 | w2 | w3 | w4 | w8
+  role: process.env.HARNESS_ROLE || 'all', // all | w0 | w1 | w2 | w3 | w4 | w5 | w6 | w8
   workerName: process.env.HARNESS_WORKER_NAME || `harness-${process.pid}`,
 
   database: {
@@ -119,6 +119,19 @@ const config = {
   retentionDays: int(process.env.HARNESS_RETENTION_DAYS, 90),
   tunnableRetentionFloor: 90,
 
+  // Slice 5. Delivery is shadow-first: only PUBLISH_MODE=live actually calls Telegram, so the
+  // publish path can be exercised end to end before a real alert is ever sent.
+  telegram: {
+    botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+    chatId: process.env.TELEGRAM_CHAT_ID || '',
+    apiRoot: process.env.TELEGRAM_API_ROOT || 'https://api.telegram.org',
+    timeoutMs: int(process.env.TELEGRAM_TIMEOUT_MS, 10000),
+  },
+
+  publish: {
+    mode: (process.env.PUBLISH_MODE || 'shadow').trim().toLowerCase(), // shadow | live
+  },
+
   llm: {
     enabled: bool(process.env.HARNESS_LLM_ENABLED, false),
     openRouterKey: process.env.OPENROUTER_API_KEY || '',
@@ -129,5 +142,7 @@ const config = {
 
 config.angel.configured = () =>
   Boolean(config.angel.clientId && config.angel.apiKey && config.angel.password && config.angel.totpSecret);
+
+config.telegram.configured = () => Boolean(config.telegram.botToken && config.telegram.chatId);
 
 module.exports = config;

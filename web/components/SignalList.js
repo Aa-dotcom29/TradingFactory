@@ -1,13 +1,13 @@
-import { directionTone, num, pct, istStamp } from '@/lib/format';
+import { directionTone, num, pct, istStamp, publishModeTone } from '@/lib/format';
 
 export default function SignalList({ signals = [], horizonLabel = 'this horizon' }) {
   if (!signals.length) {
     return (
       <div className="empty">
         <strong>No published signals for {horizonLabel}</strong>
-        The signal builder raises candidates (see above), but nothing is published until the
-        non-bypassable risk gate and the publisher exist. This stays intentionally empty rather
-        than showing placeholder trades.
+        A candidate is only published once the risk gate approves it. In shadow mode the message
+        is composed and recorded but deliberately not delivered, so an empty list is expected
+        until the pipeline has judged a candidate.
       </div>
     );
   }
@@ -30,7 +30,12 @@ export default function SignalList({ signals = [], horizonLabel = 'this horizon'
                 {signal.strategy} - {istStamp(signal.published_at)} IST
               </div>
             </div>
-            <span className={`pill ${directionTone(signal.direction)}`}>{signal.direction}</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <span className={`pill ${directionTone(signal.direction)}`}>{signal.direction}</span>
+              <span className={`pill ${publishModeTone(signal.mode)}`}>
+                {signal.mode === 'shadow' ? 'shadow - not delivered' : 'delivered'}
+              </span>
+            </div>
           </div>
           <div className="stat-row" style={{ marginTop: 12, gridTemplateColumns: 'repeat(5, 1fr)' }}>
             <div className="stat">

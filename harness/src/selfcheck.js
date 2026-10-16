@@ -14,10 +14,14 @@ const { combineVerdict, newsSignal, flowSignal, priceSignal, resolveConfig } = r
 const {
   buildPlan, computeStage, resolveSignalConfig, DEFAULT_SIGNAL_CONFIG,
 } = require('./signals');
+const { evaluateRisk, resolveRiskConfig, DEFAULT_RISK_CONFIG, lossStreak } = require('./risk');
+const { formatSignal, TelegramClient } = require('./telegram');
 const { NewsWorker } = require('./workers/w1-news');
 const { FlowWorker } = require('./workers/w2-flow');
 const { BiasWorker } = require('./workers/w3-bias');
 const { SignalWorker } = require('./workers/w4-signals');
+const { RiskWorker } = require('./workers/w5-risk');
+const { PublishWorker } = require('./workers/w6-publish');
 const rss = require('./sources/rss');
 
 const checks = [];
@@ -168,6 +172,67 @@ async function pureFunctionChecks() {
       && TOPICS.SIGNAL_CANDIDATE === 'signal.candidate'
       && DEFAULT_SIGNAL_CONFIG.version === 'signal-v1',
   );
+
+  const riskConfig = resolveRiskConfig(null);
+  const riskCandidate = {
+    horizon: 'SWING',
+    symbol: 'NIFTY',
+    direction: 'BULLISH',
+    confidence: 0.6,
+    rr: 2,
+    liquidity_ok: true,
+    as_of: new Date().toISOString(),
+  };
+  const openSession = { session: { open: true, reason: null } };
+  const approved = evaluateRisk({ candidate: riskCandidate, context: openSession, config: riskConfig });
+  record(
+    'slice 5 risk gate approves a clean candidate',
+    approved.decision === 'APPROVED' && approved.approved === true
+      && approved.checks.some((check) => check.status === 'SKIPPED'),
+    `decision=${approved.decision} gates=${approved.checks.length}`,
+  );
+
+  const deferred = evaluateRisk({
+    candidate: riskCandidate,
+    context: { session: { open: false, reason: 'after the NSE close' } },
+    config: riskConfig,
+  });
+  record(
+    'slice 5 risk gate defers outside the session',
+    deferred.decision === 'DEFERRED' && deferred.approved === false,
+    `decision=${deferred.decision}`,
+  );
+
+  const rejected = evaluateRisk({
+    candidate: { ...riskCandidate, confidence: 0.05, liquidity_ok: false },
+    context: openSession,
+    config: riskConfig,
+  });
+  record(
+    'slice 5 risk gate rejects on a failed gate',
+    rejected.decision === 'REJECTED' && rejected.failures.length >= 2,
+    `decision=${rejected.decision} failures=${rejected.failures.join('|')}`,
+  );
+
+  record('slice 5 loss streak math', lossStreak([{ pnl_pct: -1 }, { pnl_pct: -2 }, { pnl_pct: 1 }]) === 2);
+
+  const shadow = new TelegramClient({ token: '', chatId: '', mode: 'shadow' });
+  const composed = formatSignal({
+    horizon: 'SWING', symbol: 'NIFTY', direction: 'BULLISH', kind: 'OPTION',
+    instrument: 'NIFTY 27OCT2026 25000 CE', entry: 120, stop: 84, target: 192,
+    rr: 2, confidence: 0.6, strategy_version: 'signal-v1',
+  }, { mode: 'shadow' });
+  record(
+    'slice 5 telegram message composed in shadow',
+    shadow.shadow === true && composed.includes('SHADOW') && composed.includes('Execution is always manual')
+      && !/[^\x00-\x7F]/.test(composed),
+  );
+
+  record(
+    'slice 5 worker wiring',
+    typeof RiskWorker === 'function' && typeof PublishWorker === 'function'
+      && TOPICS.SIGNAL_APPROVED === 'signal.approved' && DEFAULT_RISK_CONFIG.version === 'risk-v1',
+  );
 }
 
 async function databaseChecks() {
@@ -205,6 +270,7 @@ async function main() {
   console.log('Trading Factory harness self-check');
   console.log(`  env=${config.env} role=${config.role} dryRun=${config.dryRun}`);
   console.log(`  angel configured=${config.angel.configured()}  nse=${config.nse.enabled}  rss feeds=${config.rss.feeds.length}`);
+  console.log(`  publish mode=${config.publish.mode}  telegram configured=${config.telegram.configured()}`);
 
   await pureFunctionChecks();
   await databaseChecks();

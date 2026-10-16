@@ -390,6 +390,22 @@ end $$;
 
 select tf_ensure_partitions(3);
 
+-- ---------------------------------------------------------------------------
+-- Slice 5 - risk gate + publisher
+--
+-- `risk_decisions` existed since the backbone but only knew about a published signal; the gate
+-- runs *before* a signal exists, so it now records the candidate it judged and the verdict it
+-- reached. That keeps "why was this never published" answerable gate by gate.
+-- ---------------------------------------------------------------------------
+alter table risk_decisions
+  add column if not exists candidate_id uuid references signal_candidates(id) on delete set null;
+alter table risk_decisions
+  add column if not exists decision text check (decision in ('APPROVED', 'REJECTED', 'DEFERRED'));
+alter table risk_decisions add column if not exists config_version text;
+create index if not exists risk_decisions_candidate_idx on risk_decisions (candidate_id, evaluated_at desc);
+create index if not exists risk_decisions_decision_idx on risk_decisions (decision, evaluated_at desc);
+create index if not exists signal_events_state_idx on signal_events (new_state, at desc);
+
 insert into schema_migrations (version) values ('0001_harness_backbone')
   on conflict (version) do nothing;
 insert into schema_migrations (version) values ('0002_slice1_auth')
@@ -397,6 +413,8 @@ insert into schema_migrations (version) values ('0002_slice1_auth')
 insert into schema_migrations (version) values ('0003_slice3_bias')
   on conflict (version) do nothing;
 insert into schema_migrations (version) values ('0004_slice4_signals')
+  on conflict (version) do nothing;
+insert into schema_migrations (version) values ('0005_slice5_risk_publish')
   on conflict (version) do nothing;
 
 commit;

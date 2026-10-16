@@ -143,3 +143,19 @@ export function candidateStatusTone(status) {
   if (v === 'SUPERSEDED') return 'muted';
   return 'warn';
 }
+
+// Slice 5 risk decisions. Only APPROVED is a green light. DEFERRED means "nothing failed, the
+// market is shut" and must not be coloured as either a pass or a failure.
+export function decisionTone(decision) {
+  const v = String(decision || '').toUpperCase();
+  if (v === 'APPROVED') return 'up';
+  if (v === 'REJECTED') return 'down';
+  if (v === 'DEFERRED') return 'warn';
+  return 'muted';
+}
+
+// A published signal carries the mode it was written in; a shadow signal exists in the record
+// but was never delivered, so it must never look like a delivered alert.
+export function publishModeTone(mode) {
+  return String(mode || '').toLowerCase() === 'shadow' ? 'warn' : 'accent';
+}
