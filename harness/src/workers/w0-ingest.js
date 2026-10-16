@@ -144,6 +144,11 @@ class IngestWorker {
             price: r.price,
             price_change_pct: r.priceChangePct,
             spurt_score: r.spurtScore,
+            read: r.read,
+            option_type: r.optionType,
+            strike: r.strike,
+            expiry: r.expiry,
+            bucket: r.bucket,
             payload: r.payload,
           })))}
         `;

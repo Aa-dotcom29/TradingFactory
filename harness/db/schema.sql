@@ -87,6 +87,11 @@ create table if not exists oi_spurts (
   price            numeric,
   price_change_pct numeric,
   spurt_score      numeric,
+  read             text,
+  option_type      text,
+  strike           numeric,
+  expiry           text,
+  bucket           text,
   payload          jsonb not null default '{}'::jsonb,
   primary key (id, captured_at)
 ) partition by range (captured_at);
