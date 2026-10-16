@@ -112,4 +112,29 @@ async function purgeDone(olderThanDays = 7) {
   return rows.length;
 }
 
-module.exports = { enqueue, reserve, ack, nack, stats, deadLetters, purgeDone };
+// Queue messages are ephemeral notifications: the durable record always lives in a
+// partitioned table (news_items, features, ...). A notification that no consumer has claimed
+// within hours is worthless - it cannot be acted on late - so it is dropped rather than
+// allowed to grow without bound while a downstream stage is still unbuilt.
+async function purgeStalePending(olderThanHours = 6) {
+  const sql = requireDb();
+  const rows = await sql`
+    delete from queue_messages
+    where state = 'pending' and created_at < now() - (${olderThanHours} || ' hours')::interval
+    returning id
+  `;
+  return rows.length;
+}
+
+async function backlog() {
+  const sql = requireDb();
+  const rows = await sql`
+    select count(*)::int as pending, min(created_at) as oldest
+    from queue_messages
+    where state = 'pending'
+  `;
+  const row = rows[0] || {};
+  return { pending: row.pending || 0, oldestPendingAt: row.oldest || null };
+}
+
+module.exports = { enqueue, reserve, ack, nack, stats, deadLetters, purgeDone, purgeStalePending, backlog };

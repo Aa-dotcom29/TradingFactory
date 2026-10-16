@@ -1,9 +1,10 @@
 'use strict';
 
-// Worker 0 - ingestion. Fetches raw market data, OI-spurt flow and news, normalizes it,
-// persists snapshots/features/news and enqueues downstream work. It never scores bias or
-// builds signals; that belongs to later workers. Designed to degrade gracefully: a failing
-// source is recorded in sources_health and does not stop the others.
+// Worker 0 - ingestion. Fetches raw market data, OI-spurt flow and news, persists the
+// time-series snapshots, and enqueues downstream work: news.raw for W1, flow.snapshot for W2
+// and feature.snapshot for the analyser. It deliberately does not score sentiment, entities or
+// bias - that belongs to later workers. Designed to degrade gracefully: a failing source is
+// recorded in sources_health and does not stop the others.
 
 const config = require('../config');
 const db = require('../db');
@@ -12,9 +13,28 @@ const { TOPICS } = require('../topics');
 const rss = require('../sources/rss');
 const nse = require('../sources/nse');
 const { AngelClient, configured: angelConfigured } = require('../sources/angel-client');
-const { toNewsItem } = require('../normalize');
+const { dedupeHash } = require('../normalize');
 
 const log = require('../logger').child({ module: 'w0' });
+
+// The bounded wire form of an OI-spurt row, shared by the flow snapshot message so W2 gets a
+// stable shape regardless of how NSE labels its fields.
+const flowRow = (r) => ({
+  scope: r.scope,
+  symbol: r.symbol,
+  contract: r.contract,
+  optionType: r.optionType,
+  strike: r.strike,
+  expiry: r.expiry,
+  bucket: r.bucket,
+  oi: r.oi,
+  oiChange: r.oiChange,
+  volume: r.volume,
+  price: r.price,
+  priceChangePct: r.priceChangePct,
+  read: r.read,
+  spurtScore: r.spurtScore,
+});
 
 class IngestWorker {
   constructor(options = {}) {
@@ -152,8 +172,18 @@ class IngestWorker {
             payload: r.payload,
           })))}
         `;
-        const top = rows.sort((a, b) => b.spurtScore - a.spurtScore).slice(0, 25);
-        await queue.enqueue(TOPICS.FLOW_SNAPSHOT, { capturedAt: new Date().toISOString(), top }, {
+        const capturedAt = new Date().toISOString();
+        // Downstream (W2) needs both legs of the option flow per symbol, so the snapshot
+        // carries a bounded but representative slice of underlyings and contracts rather
+        // than only the top rows by spurt score.
+        const byMove = (a, b) => Math.abs(b.oiChange || 0) - Math.abs(a.oiChange || 0);
+        const snapshot = {
+          capturedAt,
+          counts: { underlyings: underlyings.length, contracts: contracts.length },
+          underlyings: rows.filter((r) => r.scope === 'UNDERLYING').sort(byMove).slice(0, 60).map(flowRow),
+          contracts: rows.filter((r) => r.scope === 'CONTRACT').sort(byMove).slice(0, 100).map(flowRow),
+        };
+        await queue.enqueue(TOPICS.FLOW_SNAPSHOT, snapshot, {
           idemKey: `flow:${Math.floor(Date.now() / 60000)}`,
         });
       }
@@ -170,42 +200,43 @@ class IngestWorker {
   async runNews() {
     if (config.dryRun) {
       log.info('news cycle (dry run)', { feeds: config.rss.feeds.length });
-      return { newItems: 0, total: 0 };
+      return { queued: 0, duplicates: 0, total: 0 };
     }
     try {
       const raw = await rss.fetchAll();
-      const items = raw.map((r) => toNewsItem(r));
       const sql = this.sql;
-      let newItems = 0;
-      const fresh = [];
+      let queued = 0;
+      let duplicates = 0;
 
-      for (const item of items) {
-        if (sql) {
-          const seen = await sql`
-            insert into news_seen (dedupe_hash) values (${item.dedupeHash})
-            on conflict (dedupe_hash) do nothing
-            returning dedupe_hash
-          `;
-          if (!seen.length) continue; // duplicate
+      for (const entry of raw) {
+        if (!entry.title) continue;
+        if (!sql) {
+          queued += 1;
+          continue;
         }
-        newItems += 1;
-        fresh.push(item);
-        if (sql) {
-          await sql`
-            insert into news_items (published_at, source, url, title, summary, entities, sentiment, severity, relevance, dedupe_hash)
-            values (${item.publishedAt}, ${item.source}, ${item.url}, ${item.title}, ${item.summary},
-                    ${sql.json(item.entities)}, ${item.sentiment}, ${item.severity}, ${item.relevance}, ${item.dedupeHash})
-          `;
-          await queue.enqueue(TOPICS.NEWS_RAW, item, { idemKey: `news:${item.dedupeHash}` });
-        }
+        // W0 only fetches and enqueues. Scoring (entities/sentiment/severity), the permanent
+        // dedupe registry and persistence all belong to W1. The idempotency key still has to
+        // be computed here so a 5-minute poll does not re-enqueue the same headline forever.
+        const key = `news:${dedupeHash({ url: entry.url, source: entry.source, title: entry.title })}`;
+        const result = await queue.enqueue(TOPICS.NEWS_RAW, {
+          source: entry.source,
+          url: entry.url,
+          title: entry.title,
+          summary: entry.summary,
+          publishedAt: entry.publishedAt,
+          fetchedAt: new Date().toISOString(),
+        }, { idemKey: key });
+        if (result.queued) queued += 1;
+        else duplicates += 1;
       }
 
-      await this.markSource('rss', fresh.length ? 'HEALTHY' : 'WARNING', `${newItems} new / ${items.length} fetched`);
-      return { newItems, total: items.length };
+      const status = raw.length ? 'HEALTHY' : 'WARNING';
+      await this.markSource('rss', status, `${queued} queued / ${duplicates} seen / ${raw.length} fetched`);
+      return { queued, duplicates, total: raw.length };
     } catch (error) {
       await this.markSource('rss', 'ERROR', error.message);
       log.error('news cycle failed', { error: error.message });
-      return { newItems: 0, total: 0, error: error.message };
+      return { queued: 0, duplicates: 0, total: 0, error: error.message };
     }
   }
 

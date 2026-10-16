@@ -27,8 +27,8 @@ long-lived sockets). Momentum needs low latency, so the always-on worker is mand
 Sources                      Harness worker (always-on)                    Channels
 -------                      --------------------------                    --------
 Angel One REST (quotes,      W0 ingest -> Postgres + queue
-  greeks, instrument master)   |                |
-NSE (OI spurts, option         |                +--> later: W1..W7
+  greeks, instrument master)   |                +--> W1 news / W2 flow (Slice 2)
+NSE (OI spurts, option         |                +--> later: W3..W7
   chain; cookie-primed)        v
 RSS feeds (ET, BS, MC,       W8 supervisor (health, queue, freshness)
   Google News)
@@ -82,11 +82,37 @@ Workers and what they own:
 - `config_registry` stores candidate configs from the learning loop; only a human approval
   moves one to `approved`. Nothing is auto-promoted.
 
-## Rule engine (Slice 2 preview)
+## Rule engine (Slice 2)
 
 `normalize.js` + `lexicon.js` produce, per news item: entities (alias -> NSE symbol),
 sentiment in [-1, 1], severity (LOW/MEDIUM/HIGH/CRITICAL) and a recency/entity-weighted
 relevance in [0, 1]. Critical severity will gate new signals in W5.
+
+`intel.js` is the cross-item layer on top of that, and is where Slice 2's value lives:
+
+- `aggregateNewsEntities` groups the stored window of scored news by entity. One headline is
+  noise; a cluster is a signal. Per entity it reports item count, the relevance-weighted net
+  sentiment, the loudest severity seen, and a single `pressure` number in [-1, 1]
+  (`netSentiment * (1 + 0.25 * severityRank)`).
+- `computeFlowFeatures` reduces the flat NSE OI-spurt rows (underlyings + contracts) to one
+  factual row per symbol: CE and PE open-interest change, the put-call ratio of those changes,
+  the build-up quadrant mix, and the top contracts by absolute OI change.
+
+Both functions are pure (no network, no DB, no LLM), so a signal can always be explained from
+stored inputs and replayed offline. Neither emits a direction: turning these features into a
+verdict is W3's job.
+
+## Worker responsibilities (Slice 2 as built)
+
+| Worker | Consumes | Produces |
+|---|---|---|
+| W0 ingest | Angel One REST, NSE OI spurts, RSS | `market_snapshots`, `oi_spurts`; enqueues `news.raw`, `flow.snapshot`, `feature.snapshot` |
+| W1 news | `news.raw` | `news_items` (persisted), `news_seen` (permanent dedupe), `features` set `news.entity.v1`; enqueues `news.scored` |
+| W2 flow | `flow.snapshot` | `features` set `flow.v1`; enqueues `feature.snapshot` |
+| W8 supervisor | (read-only) | `sources_health` heartbeat, queue housekeeping |
+
+W2's remaining job - correlating news against OI and price - lands with W3, once there is a
+verdict to correlate against.
 
 ## Optional LLM
 

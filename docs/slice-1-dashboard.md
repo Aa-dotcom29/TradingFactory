@@ -11,7 +11,7 @@ and the three horizon tabs, all reading live from the same Postgres the harness 
 | Auth | Email + password against `profiles`; scrypt hashing (Node built-in, no native dep) |
 | Sessions | Server-side `sessions` table; only a SHA-256 hash of the cookie token is stored |
 | Routes | `/login`, `/dashboard` (overview), `/dashboard/intraday|swing|positional`, `/dashboard/settings` |
-| Data | `news_items`, `oi_spurts`, `signals`, `sources_health` |
+| Data | `news_items`, `oi_spurts`, `signals`, `sources_health`, and Slice 2's `features` (`news.entity.v1`, `flow.v1`) |
 | Households | Owner can add members from Settings; everyone shares the dashboard |
 | PWA | Web manifest + SVG icon; installable on phone and desktop |
 | Encoding | All UI text and helpers are ASCII; formatters are covered by a mojibake test |
@@ -87,11 +87,18 @@ Logout and revocation are a row delete. Expired sessions are simply not returned
 
 ## Honest empty states
 
-Slices 2-5 have not shipped, so:
+Slices 3-5 have not shipped, so:
 
 - **Signals** render an explicit "no published signals" panel. Nothing is faked.
 - **Flow** shows the real NSE OI-spurt snapshot the ingest worker stores.
 - **News** shows real scored headlines once the news pipeline runs.
+- **Entity pressure** and **Flow features** (both added in Slice 2) show the derived features
+  the W1/W2 workers write; before those workers run, each panel says so explicitly.
+
+## Next
+
+Slice 3 is the bias meter (W3), which turns the Slice 2 features into a weighted
+`bias.verdict` per horizon. See `docs/slice-2-intelligence.md` for what Slice 2 built.
 
 ## Verification without a database
 
@@ -145,7 +152,7 @@ web/
       settings/               members list + AddMemberForm (client)
     api/auth/login|logout/    route handlers
     api/members/              owner-only member creation
-  components/                 NavTabs, LogoutButton, NewsList, FlowPanel, SignalList, HealthTable
+  components/                 NavTabs, LogoutButton, NewsList, FlowPanel, SignalList, HealthTable, EntityIntel, FlowFeatures
   lib/                        db, auth, password, queries, format, horizons
   scripts/create-user.js      bootstrap the household owner
   middleware.js               cookie-presence gate

@@ -37,16 +37,27 @@ class Supervisor {
     if (!sql) {
       return { database: false, note: 'no database connection; supervisor running in memory only' };
     }
-    const [queueStats, dead, freshness] = await Promise.all([
+    const [queueStats, dead, freshness, depth] = await Promise.all([
       queue.stats(),
       queue.deadLetters(10),
       this.feedFreshness(),
+      queue.backlog(),
     ]);
     const deadCount = dead.length;
     const pending = queueStats
       .filter((r) => r.state === 'pending')
       .reduce((sum, r) => sum + r.count, 0);
-    return { database: true, queueStats, pending, deadLetters: deadCount, freshness };
+    const oldestPendingMs = depth.oldestPendingAt
+      ? Date.now() - new Date(depth.oldestPendingAt).getTime()
+      : null;
+    return {
+      database: true,
+      queueStats,
+      pending,
+      deadLetters: deadCount,
+      oldestPendingMs,
+      freshness,
+    };
   }
 
   async heartbeat() {
@@ -58,6 +69,7 @@ class Supervisor {
     const detail = JSON.stringify({
       pending: summary.pending ?? 0,
       deadLetters: summary.deadLetters ?? 0,
+      oldestPendingMin: summary.oldestPendingMs == null ? null : Math.round(summary.oldestPendingMs / 60000),
       feed: summary.freshness ? summary.freshness.state : 'UNKNOWN',
       uptimeSec: Math.round((Date.now() - Date.parse(this.startedAt)) / 1000),
     });
@@ -77,13 +89,17 @@ class Supervisor {
   }
 
   async housekeeping() {
-    if (!this.sql) return { purged: 0 };
+    if (!this.sql) return { purged: 0, purgedStale: 0 };
     try {
-      const purged = await queue.purgeDone(7);
-      return { purged };
+      const [purged, purgedStale] = await Promise.all([
+        queue.purgeDone(7),
+        queue.purgeStalePending(6),
+      ]);
+      if (purgedStale) log.warn('dropped stale queued notifications', { purgedStale });
+      return { purged, purgedStale };
     } catch (error) {
       log.warn('housekeeping failed', { error: error.message });
-      return { purged: 0, error: error.message };
+      return { purged: 0, purgedStale: 0, error: error.message };
     }
   }
 }

@@ -1,6 +1,8 @@
-import { getHealth, getNews, getFlow } from '@/lib/queries';
+import { getHealth, getNews, getFlow, getEntityFeatures, getFlowFeatures } from '@/lib/queries';
 import NewsList from '@/components/NewsList';
 import FlowPanel, { FlowUnderlyings } from '@/components/FlowPanel';
+import EntityIntel from '@/components/EntityIntel';
+import FlowFeatures from '@/components/FlowFeatures';
 import HealthTable from '@/components/HealthTable';
 
 export const dynamic = 'force-dynamic';
@@ -8,7 +10,13 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Overview - Trading Factory' };
 
 export default async function OverviewPage() {
-  const [health, news, flow] = await Promise.all([getHealth(), getNews(12), getFlow(10)]);
+  const [health, news, flow, entityData, flowFeatures] = await Promise.all([
+    getHealth(),
+    getNews(12),
+    getFlow(10),
+    getEntityFeatures(8),
+    getFlowFeatures(10),
+  ]);
   const counts = health.counts || {};
 
   return (
@@ -39,6 +47,10 @@ export default async function OverviewPage() {
           <div className="k">Signals</div>
           <div className="v mono">{counts.signals_total ?? 0}</div>
         </div>
+        <div className="stat">
+          <div className="k">Entities tracked</div>
+          <div className="v mono">{(entityData.entities || []).length || '-'}</div>
+        </div>
       </div>
 
       <div className="grid cols-2">
@@ -49,6 +61,24 @@ export default async function OverviewPage() {
           <div className="hr" />
           <p className="hint">Underlying futures OI change.</p>
           <FlowUnderlyings rows={(flow.underlyings || []).slice(0, 8)} />
+        </section>
+
+        <section className="card">
+          <h2>Entity pressure</h2>
+          <p className="hint">
+            Scored headlines rolled up per entity. A cluster of coverage reads as one number.
+          </p>
+          <EntityIntel data={entityData} limit={8} />
+        </section>
+      </div>
+
+      <div className="grid cols-2">
+        <section className="card">
+          <h2>Flow features</h2>
+          <p className="hint">
+            Per-symbol option-flow features derived from the OI-spurt snapshot.
+          </p>
+          <FlowFeatures data={flowFeatures} limit={8} />
         </section>
 
         <section className="card">

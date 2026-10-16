@@ -1,8 +1,10 @@
 import { notFound } from 'next/navigation';
-import { getSignals, getFlow, getNews } from '@/lib/queries';
+import { getSignals, getFlow, getNews, getEntityFeatures, getFlowFeatures } from '@/lib/queries';
 import { horizonByKey } from '@/lib/horizons';
 import SignalList from '@/components/SignalList';
 import FlowPanel, { FlowUnderlyings } from '@/components/FlowPanel';
+import EntityIntel from '@/components/EntityIntel';
+import FlowFeatures from '@/components/FlowFeatures';
 import NewsList from '@/components/NewsList';
 
 export const dynamic = 'force-dynamic';
@@ -18,10 +20,12 @@ export default async function HorizonPage({ params }) {
   const horizon = horizonByKey(raw);
   if (!horizon) notFound();
 
-  const [signals, flow, news] = await Promise.all([
+  const [signals, flow, news, entityData, flowFeatures] = await Promise.all([
     getSignals(horizon.key),
     getFlow(horizon.key === 'POSITIONAL' ? 12 : 20),
     getNews(20),
+    getEntityFeatures(8),
+    getFlowFeatures(10),
   ]);
 
   return (
@@ -70,6 +74,25 @@ export default async function HorizonPage({ params }) {
           <FlowUnderlyings rows={(flow.underlyings || []).slice(0, 12)} />
         </section>
       )}
+
+      <div className="grid cols-2">
+        <section className="card">
+          <h2>Flow features</h2>
+          <p className="hint">
+            Per-symbol option-flow features derived from the OI-spurt snapshot - CE and PE
+            open-interest change, put-call ratio and the build-up mix.
+          </p>
+          <FlowFeatures data={flowFeatures} limit={8} />
+        </section>
+
+        <section className="card">
+          <h2>Entity pressure</h2>
+          <p className="hint">
+            Scored headlines rolled up per entity over the last 48 hours.
+          </p>
+          <EntityIntel data={entityData} limit={8} />
+        </section>
+      </div>
 
       <section className="card">
         <h2>News</h2>

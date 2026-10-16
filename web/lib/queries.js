@@ -115,3 +115,51 @@ export async function listMembers(householdId) {
     return [];
   }
 }
+
+// Slice 2: the latest entity-level news features written by the news worker. One row per
+// entity, already relevance-weighted and severity-escalated upstream so the UI does not
+// re-derive anything.
+export async function getEntityFeatures(limit = 8) {
+  const empty = { asOf: null, entities: [] };
+  const sql = db();
+  if (!sql) return empty;
+  try {
+    const asOf = (await sql`
+      select max(as_of) as as_of from features where feature_set = 'news.entity.v1'
+    `)[0]?.as_of;
+    if (!asOf) return empty;
+    const entities = await sql`
+      select symbol, values
+      from features
+      where feature_set = 'news.entity.v1' and as_of = ${asOf}
+      order by coalesce((values->>'itemCount')::int, 0) desc, symbol asc
+      limit ${limit}
+    `;
+    return { asOf, entities };
+  } catch {
+    return empty;
+  }
+}
+
+// Slice 2: the latest per-symbol option-flow features written by the flow worker.
+export async function getFlowFeatures(limit = 10) {
+  const empty = { asOf: null, rows: [] };
+  const sql = db();
+  if (!sql) return empty;
+  try {
+    const asOf = (await sql`
+      select max(as_of) as as_of from features where feature_set = 'flow.v1'
+    `)[0]?.as_of;
+    if (!asOf) return empty;
+    const rows = await sql`
+      select symbol, values
+      from features
+      where feature_set = 'flow.v1' and as_of = ${asOf}
+      order by abs(coalesce((values->>'netOiChange')::numeric, 0)) desc, symbol asc
+      limit ${limit}
+    `;
+    return { asOf, rows };
+  } catch {
+    return empty;
+  }
+}

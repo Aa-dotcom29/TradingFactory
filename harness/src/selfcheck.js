@@ -9,6 +9,9 @@ const db = require('./db');
 const queue = require('./queue');
 const { TOPICS } = require('./topics');
 const { toNewsItem, dedupeHash, resolveEntities, scoreSentiment, classifySeverity } = require('./normalize');
+const { aggregateNewsEntities, computeFlowFeatures } = require('./intel');
+const { NewsWorker } = require('./workers/w1-news');
+const { FlowWorker } = require('./workers/w2-flow');
 const rss = require('./sources/rss');
 
 const checks = [];
@@ -42,6 +45,36 @@ async function pureFunctionChecks() {
   const xml = '<rss><channel><item><title>A &amp; B</title><link>https://x/y</link><description><![CDATA[<b>hi</b>]]></description><pubDate>Tue, 14 Oct 2026 10:00:00 GMT</pubDate></item></channel></rss>';
   const parsed = rss.parseFeed(xml, 'test.com');
   record('rss parse', parsed.length === 1 && parsed[0].title === 'A & B', JSON.stringify(parsed[0] || {}));
+
+  const entities = aggregateNewsEntities([{
+    publishedAt: new Date().toISOString(),
+    title: 'Reliance beats estimates, profit jumps',
+    entities: ['RELIANCE'],
+    sentiment: 0.7,
+    severity: 'HIGH',
+    relevance: 0.8,
+  }]);
+  record(
+    'intel entity aggregation',
+    entities.length === 1 && entities[0].values.pressure > 0,
+    entities.length ? `pressure=${entities[0].values.pressure}` : 'no rows',
+  );
+
+  const flow = computeFlowFeatures([
+    { scope: 'CONTRACT', symbol: 'NIFTY', optionType: 'CE', oiChange: 100, read: 'LONG BUILDUP' },
+    { scope: 'CONTRACT', symbol: 'NIFTY', optionType: 'PE', oiChange: 50, read: 'SHORT COVERING' },
+  ]);
+  record(
+    'intel flow features',
+    flow.length === 1 && flow[0].values.ceOiChange === 100 && flow[0].values.pcrOiChange === 0.5,
+    flow.length ? `ce=${flow[0].values.ceOiChange} pcr=${flow[0].values.pcrOiChange}` : 'no rows',
+  );
+
+  record(
+    'slice 2 worker wiring',
+    typeof NewsWorker === 'function' && typeof FlowWorker === 'function'
+      && TOPICS.NEWS_SCORED === 'news.scored' && TOPICS.FEATURE_SNAPSHOT === 'feature.snapshot',
+  );
 }
 
 async function databaseChecks() {
@@ -69,6 +102,9 @@ async function databaseChecks() {
       await queue.ack(reserved[0].id);
       record('queue ack', true);
     }
+
+    const depth = await queue.backlog();
+    record('queue backlog readable', Number.isInteger(depth.pending), `pending=${depth.pending}`);
   }
 }
 

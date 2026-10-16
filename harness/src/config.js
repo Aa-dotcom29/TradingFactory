@@ -62,7 +62,7 @@ const config = {
   env: process.env.NODE_ENV || 'development',
   dryRun: bool(process.env.HARNESS_DRY_RUN, false),
   once: bool(process.env.HARNESS_ONCE, false),
-  role: process.env.HARNESS_ROLE || 'all', // all | w0 | w8
+  role: process.env.HARNESS_ROLE || 'all', // all | w0 | w1 | w2 | w8
   workerName: process.env.HARNESS_WORKER_NAME || `harness-${process.pid}`,
 
   database: {
@@ -107,6 +107,7 @@ const config = {
     marketMs: int(process.env.HARNESS_MARKET_INTERVAL_MS, 10000),
     flowMs: int(process.env.HARNESS_FLOW_INTERVAL_MS, 60000),
     newsMs: int(process.env.HARNESS_NEWS_INTERVAL_MS, 300000),
+    scoreMs: int(process.env.HARNESS_SCORE_INTERVAL_MS, 15000),
     heartbeatMs: int(process.env.HARNESS_HEARTBEAT_INTERVAL_MS, 30000),
   },
 

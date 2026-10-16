@@ -1,14 +1,26 @@
 'use strict';
 
-// Harness entrypoint. Runs the Slice 0 workers (W0 ingestion + W8 supervisor), either once
-// for a smoke test or on a schedule. Supports --dry (no network, no DB) so CI and self-checks
-// can validate wiring without credentials.
+// Harness entrypoint. Runs the pipeline workers either once for a smoke test or on a
+// schedule. Supports --dry (no network, no DB) so CI and self-checks can validate wiring
+// without credentials.
+//
+// Roles:
+//   all (default) - every worker in one process. Fine for a single Always Free VM.
+//   w0            - ingest only
+//   w1            - news scoring + entity features
+//   w2            - flow features
+//   w8            - supervisor
+// Splitting roles lets a busy worker scale out later without changing the code.
 
 const config = require('./config');
 const log = require('./logger').child({ module: 'run' });
 const db = require('./db');
 const { IngestWorker } = require('./workers/w0-ingest');
+const { NewsWorker } = require('./workers/w1-news');
+const { FlowWorker } = require('./workers/w2-flow');
 const { Supervisor } = require('./workers/w8-supervisor');
+
+const ROLES = ['all', 'w0', 'w1', 'w2', 'w8'];
 
 function parseArgs(argv) {
   const flags = { once: false, dry: false, role: null };
@@ -29,7 +41,8 @@ function makeGuard(name, fn) {
     }
     running = true;
     try {
-      await fn();
+      const result = await fn();
+      if (result && typeof result === 'object') log.info('job complete', { job: name, ...result });
     } catch (error) {
       log.error('scheduled job failed', { job: name, error: error.message });
     } finally {
@@ -43,6 +56,11 @@ async function main() {
   if (flags.dry) config.dryRun = true;
   if (flags.once) config.once = true;
   if (flags.role) config.role = flags.role;
+  if (!ROLES.includes(config.role)) {
+    log.error('unknown role', { role: config.role, expected: ROLES.join('|') });
+    process.exitCode = 1;
+    return;
+  }
 
   log.info('harness starting', {
     role: config.role,
@@ -60,11 +78,11 @@ async function main() {
     }
   }
 
-  const runIngest = config.role === 'all' || config.role === 'w0';
-  const runSupervisor = config.role === 'all' || config.role === 'w8';
-
-  const ingest = runIngest ? new IngestWorker() : null;
-  const supervisor = runSupervisor ? new Supervisor() : null;
+  const has = (role) => config.role === 'all' || config.role === role;
+  const ingest = has('w0') ? new IngestWorker() : null;
+  const news = has('w1') ? new NewsWorker() : null;
+  const flowWorker = has('w2') ? new FlowWorker() : null;
+  const supervisor = has('w8') ? new Supervisor() : null;
 
   const timers = [];
   const shutdown = async (signal) => {
@@ -77,7 +95,10 @@ async function main() {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
   if (config.once) {
+    // Ordered pipeline: W0 produces the messages W1/W2 consume, so drain after ingest.
     if (ingest) log.info('ingest result', await ingest.runAll());
+    if (news) log.info('news result', await news.runOnce());
+    if (flowWorker) log.info('flow result', await flowWorker.runOnce());
     if (supervisor) {
       await supervisor.heartbeat();
       await supervisor.housekeeping();
@@ -93,6 +114,14 @@ async function main() {
     timers.push(setInterval(makeGuard('flow', () => ingest.runFlow()), config.poll.flowMs));
     timers.push(setInterval(makeGuard('news', () => ingest.runNews()), config.poll.newsMs));
   }
+  if (news) {
+    await news.runOnce();
+    timers.push(setInterval(makeGuard('news-worker', () => news.runOnce()), config.poll.scoreMs));
+  }
+  if (flowWorker) {
+    await flowWorker.runOnce();
+    timers.push(setInterval(makeGuard('flow-worker', () => flowWorker.runOnce()), config.poll.scoreMs));
+  }
   if (supervisor) {
     await supervisor.heartbeat();
     timers.push(setInterval(makeGuard('heartbeat', () => supervisor.heartbeat()), config.poll.heartbeatMs));
@@ -103,6 +132,7 @@ async function main() {
     marketMs: config.poll.marketMs,
     flowMs: config.poll.flowMs,
     newsMs: config.poll.newsMs,
+    scoreMs: config.poll.scoreMs,
     heartbeatMs: config.poll.heartbeatMs,
   });
 }
