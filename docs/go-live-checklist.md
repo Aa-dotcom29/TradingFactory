@@ -114,6 +114,12 @@ If a delivery fails, the event is `DELIVERY_FAILED`, the publisher records a `WA
 
 - `sources_health` - one row per feed. `angel` should be HEALTHY; a dead source is recorded, never
   fatal, and the pipeline falls back to Yahoo for prices.
+- The supervisor's `feed` state. Out of hours it reads `CLOSED`, and that is correct: the market
+  cannot produce a reading, so the quote, option-premium and OI-spurt polls all skip themselves
+  (`skipped: market-closed` in the cycle log) and the last in-session reading stands as the last
+  known price. `STALE` is the one that matters, and it only means something **while the NSE is
+  trading**. A `STALE` on an NSE holiday is expected - public holidays are not modelled - so check
+  the calendar before treating it as a broken feed.
 - `risk_decisions` - why anything was approved, rejected or deferred, gate by gate. A `DEFERRED` after
   hours is correct, not a fault.
 - The evaluator's `sources_health` row - `N closed of M open`. An option-premium position is scored

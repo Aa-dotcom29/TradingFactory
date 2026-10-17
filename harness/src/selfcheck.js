@@ -28,6 +28,8 @@ const { PublishWorker } = require('./workers/w6-publish');
 const { EvaluateWorker, holdingDaysFor } = require('./workers/w7-evaluate');
 const { STATUS, evaluateOutcome, scoreOutcomes, proposeConfigChange, PRICE_SOURCE } = require('./outcome');
 const { contractKey, matchOptionToken } = require('./contract');
+const { IngestWorker } = require('./workers/w0-ingest');
+const { batchFingerprint, RepeatTracker, feedState } = require('./freshness');
 const rss = require('./sources/rss');
 const yahoo = require('./sources/yahoo');
 
@@ -464,6 +466,38 @@ async function pureFunctionChecks() {
       && holdingDaysFor(DEFAULT_RISK_CONFIG, 'INTRADAY') === 1
       && holdingDaysFor(DEFAULT_RISK_CONFIG, 'SWING') === 30
       && holdingDaysFor(DEFAULT_RISK_CONFIG, 'POSITIONAL') === 180,
+  );
+
+  // Slice 9 - a 24/7 harness must not confuse "the exchange is shut" with "the feed has broken",
+  // nor archive the same reading every poll until midnight.
+  const weekend = Date.parse('2026-10-17T06:00:00Z');
+  const w0 = new IngestWorker({
+    angel: { quote: async () => { throw new Error('the broker must not be called while shut'); } },
+  });
+  const market9 = await w0.runMarket(weekend);
+  const flow9 = await w0.runFlow(weekend);
+  record(
+    'slice 9 market-derived polls stop once the exchange is shut',
+    market9.skipped === 'market-closed' && flow9.skipped === 'market-closed',
+    `market=${market9.skipped || 'ran'} flow=${flow9.skipped || 'ran'}`,
+  );
+
+  const tracker9 = new RepeatTracker();
+  const batch9 = [{ symbol: 'NIFTY 50', ltp: 25000, quoteTime: '2026-10-19T04:00:00.000Z' }];
+  const reordered9 = [{ quoteTime: '2026-10-19T04:00:00.000Z', ltp: 25000, symbol: 'NIFTY 50' }];
+  record(
+    'slice 9 a frozen feed is recognised rather than re-archived',
+    batchFingerprint(batch9) === batchFingerprint(reordered9)
+      && tracker9.isRepeat('quote', batch9) === false
+      && tracker9.isRepeat('quote', reordered9) === true
+      && tracker9.isRepeat('quote', [{ ...batch9[0], ltp: 25001 }]) === false,
+  );
+
+  const closed9 = feedState('2026-10-16T10:00:00Z', { now: weekend, staleAfterMs: 1000 });
+  record(
+    'slice 9 a closed market reads CLOSED so the supervisor is not falsely alarmed overnight',
+    closed9.state === 'CLOSED',
+    `state=${closed9.state}`,
   );
 }
 

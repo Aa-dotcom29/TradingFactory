@@ -71,6 +71,15 @@ Workers and what they own:
 | W7 evaluator | outcomes, hit-rate, calibration | evaluate.signal |
 | W8 supervisor | health, queue, freshness, housekeeping | sources_health |
 
+**W0's polling discipline (Slice 9).** Market-derived ingestion is session-gated and repeat-aware,
+so a 24/7 process cannot archive a closed market. Once the NSE is shut, the quote, option-premium and
+OI-spurt cycles skip themselves (`skipped: market-closed`), and the last in-session reading stands as
+the last known price. The quote and premium series additionally drop a batch identical to the one
+already stored, because a frozen feed is not new evidence and both are aged by the exchange stamp the
+freeze leaves unchanged. The flow series is deliberately **not** fingerprinted: an OI-spurt row carries
+no stamp, so the harness ages flow by capture time, and suppressing a capture would quietly age the
+bias meter's flow component. See [`slice-9-session-aware-ingestion.md`](slice-9-session-aware-ingestion.md).
+
 ## Data model rules
 
 - Time-series tables (`market_snapshots`, `oi_spurts`, `news_items`, `features`,

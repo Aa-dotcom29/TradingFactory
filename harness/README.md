@@ -31,6 +31,8 @@ harness/
   src/db.js                Postgres client (boots without a DB)
   src/queue.js             FOR UPDATE SKIP LOCKED queue
   src/topics.js            canonical queue topics + horizons
+  src/session.js           the NSE session clock, shared by W0/W3/W5
+  src/freshness.js         pure: has a batch changed? is the feed late?
   src/lexicon.js           sentiment / severity / entity data
   src/normalize.js         pure normalization + scoring
   src/sources/rss.js       dependency-free RSS/Atom reader
@@ -53,10 +55,14 @@ npm run harness:angel-check   # validate Angel One credentials (see docs/angel-o
 npm run harness:test          # unit tests
 npm run harness:schema        # apply schema.sql to DATABASE_URL
 npm run harness:once          # run a single ingestion cycle
-npm run harness               # run continuously (W0 + W8)
+npm run harness               # run continuously (default role: every worker)
 npm run harness:daily         # single cycle, dry (no network/DB)
 npm run harness:reset-ledger  # clear the signal ledger before go-live (see docs/go-live-checklist.md)
 ```
+
+Market-derived polling is session-gated: once the NSE is shut, the quote and OI-spurt cycles skip
+themselves and the supervisor reports `feed: CLOSED` rather than stale. See
+[`docs/slice-9-session-aware-ingestion.md`](../docs/slice-9-session-aware-ingestion.md).
 
 ## Going live
 

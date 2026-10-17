@@ -7,6 +7,7 @@
 const config = require('../config');
 const db = require('../db');
 const queue = require('../queue');
+const { feedState } = require('../freshness');
 const log = require('../logger').child({ module: 'w8' });
 
 class Supervisor {
@@ -20,16 +21,17 @@ class Supervisor {
     return db.client();
   }
 
+  // Freshness is only meaningful while the exchange is trading. The decision itself lives in
+  // ./src/freshness.js so it can be tested without a database; here we only supply the newest
+  // capture time. Out of hours this reports CLOSED rather than STALE, which keeps the supervisor
+  // quiet all evening instead of raising a false alarm that no ticks have arrived since the close.
   async feedFreshness() {
     const sql = this.sql;
     if (!sql) return null;
     const rows = await sql`
       select max(captured_at) as latest from market_snapshots
     `;
-    const latest = rows[0]?.latest;
-    if (!latest) return { ageMs: null, state: 'NO_DATA' };
-    const ageMs = Date.now() - new Date(latest).getTime();
-    return { latest, ageMs, state: ageMs > this.staleAfterMs ? 'STALE' : 'FRESH' };
+    return feedState(rows[0]?.latest, { staleAfterMs: this.staleAfterMs });
   }
 
   async snapshot() {

@@ -17,6 +17,7 @@ const { AngelClient, configured: angelConfigured } = require('../sources/angel-c
 const { toQuotePayload } = require('../sources/angel-quote');
 const { contractKey, matchOptionToken, PRICE_SOURCE } = require('../contract');
 const { isMarketOpen } = require('../session');
+const { RepeatTracker } = require('../freshness');
 const { normalizeUniverseSymbol } = require('../bias');
 const { dedupeHash } = require('../normalize');
 
@@ -26,6 +27,11 @@ const log = require('../logger').child({ module: 'w0' });
 // accepts. Both are named once so the writer (this worker) and the reader (W7) cannot drift.
 const OPTION_QUOTE_SET = PRICE_SOURCE.OPTION;
 const OPTION_BATCH = 50;
+
+// A batch can only be judged a repeat of an earlier one when every reading carries the exchange's
+// own stamp. Without a stamp the harness ages the reading by its capture time (see `bias.js`), so
+// storing it again is genuinely new evidence and must not be suppressed.
+const allStamped = (rows) => rows.every((r) => r.payload && r.payload.quoteTime);
 
 // The bounded wire form of an OI-spurt row, shared by the flow snapshot message so W2 gets a
 // stable shape regardless of how NSE labels its fields.
@@ -52,6 +58,9 @@ class IngestWorker {
     this.angel = options.angel || new AngelClient();
     this.indexTokens = null;
     this.equityTokens = null;
+    // Recognises a frozen feed: the market is nominally open (so the session gate passes) but the
+    // source is handing back exactly what it gave us last time.
+    this.repeats = new RepeatTracker();
     this.startedAt = new Date().toISOString();
   }
 
@@ -86,9 +95,13 @@ class IngestWorker {
 
   // One insert path for quotes, whichever provider produced them. Provenance travels with the
   // row into `features`, so a delayed Yahoo read can never be mistaken for a live broker tick.
+  //
+  // Returns the number of rows actually stored, which is zero when the feed is frozen. Callers must
+  // not read that zero as "the source failed": a source can answer and still have nothing new.
   async persistQuotes(rows, { capturedAt, provider, provenance }) {
     const sql = this.sql;
     if (!sql || !rows.length) return 0;
+    if (allStamped(rows) && this.repeats.isRepeat('quote', rows)) return 0;
     await sql`
       insert into market_snapshots ${sql(rows.map((r) => ({
         captured_at: capturedAt, provider, symbol: r.symbol, kind: 'QUOTE', payload: r.payload,
@@ -127,10 +140,12 @@ class IngestWorker {
         payload: toQuotePayload(q),
       };
     });
-    await this.persistQuotes(rows, {
+    const stored = await this.persistQuotes(rows, {
       capturedAt, provider: 'Angel One SmartAPI', provenance: 'angel-live',
     });
-    return { quotes: rows.length, provenance: 'angel-live' };
+    // `quotes` is what was stored, `fetched` is what the broker answered with. The provider
+    // waterfall keys off `fetched`, so a frozen feed is never mistaken for a dead provider.
+    return { quotes: stored, fetched: rows.length, provenance: 'angel-live' };
   }
 
   // The free fallback. Yahoo covers the gap while the broker onboarding is unfinished; every row
@@ -160,7 +175,7 @@ class IngestWorker {
         quoteTime: q.quoteTime,
       },
     }));
-    await this.persistQuotes(rows, {
+    const stored = await this.persistQuotes(rows, {
       capturedAt, provider: yahoo.PROVIDER, provenance: yahoo.PROVENANCE,
     });
 
@@ -170,22 +185,31 @@ class IngestWorker {
       status,
       `${quotes.length} delayed quotes${errors.length ? `, ${errors.length} failed` : ''}`,
     );
-    return { quotes: quotes.length, failed: errors.length, provenance: yahoo.PROVENANCE };
+    return {
+      quotes: stored, fetched: quotes.length, failed: errors.length, provenance: yahoo.PROVENANCE,
+    };
   }
 
   // Provider waterfall: the live broker feed first, then the free delayed source, so the pipeline
   // is never left without a quote while the authoritative source is unavailable.
-  async runMarket() {
+  //
+  // The whole cycle is skipped once the exchange is shut. A closed market cannot produce a reading,
+  // so polling it would burn broker quota (and NSE's patience) to re-learn the same number, and the
+  // repeat guard below would only be papering over the waste. The last in-session reading stands as
+  // the last known price. `now` is injectable so the gate is testable.
+  async runMarket(now = Date.now()) {
     if (config.dryRun) {
       log.info('market cycle (dry run)', { indices: config.universe.indices.length });
       return { quotes: 0 };
     }
+    if (!isMarketOpen(now)) return { quotes: 0, skipped: 'market-closed' };
 
     if (angelConfigured()) {
       try {
         const viaAngel = await this.marketViaAngel();
-        if (viaAngel.quotes > 0) {
-          await this.markSource('angel', 'HEALTHY', `${viaAngel.quotes} quotes`);
+        if (viaAngel.fetched > 0) {
+          await this.markSource('angel', 'HEALTHY',
+            `${viaAngel.fetched} quotes (${viaAngel.quotes} new)`);
           return viaAngel;
         }
         log.warn('Angel One returned no quotes; falling back to the free source');
@@ -234,6 +258,7 @@ class IngestWorker {
   async persistOptionQuotes(rows, { capturedAt, provider, provenance }) {
     const sql = this.sql;
     if (!sql || !rows.length) return 0;
+    if (allStamped(rows) && this.repeats.isRepeat('option', rows)) return 0;
     await sql`
       insert into market_snapshots ${sql(rows.map((r) => ({
         captured_at: capturedAt, provider, symbol: r.symbol, kind: 'OPTION_QUOTE', payload: r.payload,
@@ -316,12 +341,20 @@ class IngestWorker {
         });
       }
 
-      const written = await this.persistOptionQuotes(rows, {
+      const stored = await this.persistOptionQuotes(rows, {
         capturedAt, provider: 'Angel One SmartAPI', provenance: 'angel-live',
       });
-      await this.markSource('angel-options', written ? 'HEALTHY' : 'WARNING',
-        `${written} contract(s) quoted of ${wanted.size} held, ${unresolved.length} unresolved`);
-      return { contracts: written, held: wanted.size, unresolved: unresolved.length, provenance: 'angel-live' };
+      // Health reflects whether the broker answered for the contracts we hold; `contracts` reports
+      // how many premiums were actually new. A premium that has not moved is not a failure.
+      await this.markSource('angel-options', rows.length ? 'HEALTHY' : 'WARNING',
+        `${rows.length} contract(s) quoted of ${wanted.size} held, ${unresolved.length} unresolved`);
+      return {
+        contracts: stored,
+        fetched: rows.length,
+        held: wanted.size,
+        unresolved: unresolved.length,
+        provenance: 'angel-live',
+      };
     } catch (error) {
       await this.markSource('angel-options', 'ERROR', error.message);
       log.warn('option quote cycle failed', { error: error.message });
@@ -329,12 +362,22 @@ class IngestWorker {
     }
   }
 
-  async runFlow() {
+  async runFlow(now = Date.now()) {
     if (config.dryRun) {
       log.info('flow cycle (dry run)', { source: 'NSE OI spurts' });
       return { rows: 0 };
     }
     if (!config.nse.enabled) return { rows: 0, skipped: 'nse-disabled' };
+    // OI-spurt pages are a read of the live market. Out of hours NSE serves the same table it
+    // served at the close, so a minute-by-minute poll would archive the identical snapshot all
+    // night and re-enqueue W2 for each copy.
+    //
+    // Unlike the quote and premium series, this one is NOT fingerprint-deduped. Those carry the
+    // exchange's own stamp and are aged by it, so dropping an unchanged batch cannot change how the
+    // reading ages. An OI-spurt row carries no stamp at all: the harness dates flow evidence by its
+    // capture time, so suppressing a capture would quietly age the bias meter's flow component
+    // while the market was open. The saving is not worth moving the brain.
+    if (!isMarketOpen(now)) return { rows: 0, skipped: 'market-closed' };
 
     try {
       const { underlyings, contracts } = await nse.fetchOiSpurts();
@@ -454,4 +497,4 @@ class IngestWorker {
   }
 }
 
-module.exports = { IngestWorker };
+module.exports = { IngestWorker, allStamped };
