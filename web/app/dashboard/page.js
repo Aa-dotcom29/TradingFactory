@@ -10,6 +10,7 @@ import RiskDecisions from '@/components/RiskDecisions';
 import HealthTable from '@/components/HealthTable';
 import PipelineStrip from '@/components/PipelineStrip';
 import ConsensusMeter from '@/components/ConsensusMeter';
+import StatusBanner from '@/components/StatusBanner';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,6 +37,7 @@ export default async function OverviewPage() {
   const biasTotal = (biasCounts.BULLISH || 0) + (biasCounts.BEARISH || 0) + (biasCounts.NEUTRAL || 0);
   const sources = health.sources || [];
   const healthy = sources.filter((s) => s.status === 'HEALTHY').length;
+  const live = String(mode).toLowerCase() === 'live';
 
   // The chain, stage by stage, with the real number of rows each worker handed on.
   const pipeline = [
@@ -67,7 +69,26 @@ export default async function OverviewPage() {
         </div>
       </div>
 
-      {health.error ? <div className="banner error">Database read failed: {health.error}</div> : null}
+      {health.error ? (
+        <div className="banner error">Database read failed: {health.error}</div>
+      ) : (
+        <StatusBanner
+          tone={live ? 'up' : 'warn'}
+          headline={live ? 'Live delivery' : 'Shadow mode'}
+          facts={[
+            { k: 'tracked', v: biasTotal },
+            { k: 'bullish', v: biasCounts.BULLISH || 0 },
+            { k: 'ready', v: counts.stages_ready ?? 0 },
+            { k: 'approved 24h', v: counts.risk_approved_24h ?? 0 },
+            { k: 'delivered 24h', v: counts.signals_24h ?? 0 },
+          ]}
+          note={
+            live
+              ? 'Approved signals are being delivered to the household channel. Execution stays manual: this engine never places an order.'
+              : 'Signals are scored, risk-gated and written to the ledger, but nothing is sent. Flip PUBLISH_MODE per horizon when you are ready to go live.'
+          }
+        />
+      )}
 
       <PipelineStrip nodes={pipeline} />
 

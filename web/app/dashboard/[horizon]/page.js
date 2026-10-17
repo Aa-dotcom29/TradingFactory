@@ -1,9 +1,10 @@
 import { notFound } from 'next/navigation';
 import {
   getSignals, getFlow, getNews, getEntityFeatures, getFlowFeatures, getBias,
-  getSignalStages, getSignalCandidates, getRiskDecisions,
+  getSignalStages, getSignalCandidates, getRiskDecisions, getHorizonPulse,
 } from '@/lib/queries';
 import { horizonByKey } from '@/lib/horizons';
+import StatusBanner from '@/components/StatusBanner';
 import SignalList from '@/components/SignalList';
 import SignalStages from '@/components/SignalStages';
 import SignalCandidates from '@/components/SignalCandidates';
@@ -27,7 +28,7 @@ export default async function HorizonPage({ params }) {
   const horizon = horizonByKey(raw);
   if (!horizon) notFound();
 
-  const [signals, flow, news, entityData, flowFeatures, bias, stages, candidates, riskDecisions] = await Promise.all([
+  const [signals, flow, news, entityData, flowFeatures, bias, stages, candidates, riskDecisions, pulse] = await Promise.all([
     getSignals(horizon.key),
     getFlow(horizon.key === 'POSITIONAL' ? 12 : 20),
     getNews(20),
@@ -37,7 +38,10 @@ export default async function HorizonPage({ params }) {
     getSignalStages(horizon.key, 12),
     getSignalCandidates(horizon.key, 10),
     getRiskDecisions(horizon.key, 8),
+    getHorizonPulse(horizon.key),
   ]);
+
+  const live = String(process.env.PUBLISH_MODE || 'shadow').toLowerCase() === 'live';
 
   return (
     <div className="stack">
@@ -53,6 +57,25 @@ export default async function HorizonPage({ params }) {
         </div>
         <span className="pill accent">{horizon.key}</span>
       </div>
+
+      <StatusBanner
+        tone={pulse.ready > 0 ? 'up' : 'sig'}
+        headline={pulse.ready > 0 ? `${pulse.ready} ready for the gate` : 'No names ready yet'}
+        facts={[
+          { k: 'tracked', v: pulse.tracked },
+          { k: 'bullish', v: pulse.bullish },
+          { k: 'building', v: pulse.building },
+          { k: 'queued', v: pulse.queued },
+          { k: 'approved 24h', v: pulse.approved24h },
+          { k: 'delivered 24h', v: pulse.published24h },
+        ]}
+        note={
+          `${horizon.label} candidates are raised at READY and must clear every gate before anything is published. ` +
+          (live
+            ? 'Delivery is live; approved signals go to the household channel and execution is manual.'
+            : 'Delivery is in shadow, so nothing is being sent yet - the ledger is still written in full.')
+        }
+      />
 
       <section className="card">
         <h2>Bias meter</h2>

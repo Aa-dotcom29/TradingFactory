@@ -112,6 +112,56 @@ export async function getSignals(horizon, limit = 25) {
   }
 }
 
+// One horizon's state in a single row, for the status banner. Deliberately not
+// bounded by the display limits used elsewhere on the page: the banner should
+// report the whole horizon, not the twelve rows that happen to fit in a table.
+export async function getHorizonPulse(horizon) {
+  const empty = {
+    tracked: 0, bullish: 0, bearish: 0, ready: 0, building: 0,
+    queued: 0, approved24h: 0, rejected24h: 0, published24h: 0, live24h: 0,
+  };
+  const sql = db();
+  if (!sql) return empty;
+  try {
+    const rows = await sql`
+      with latest_bias as (
+        select distinct on (symbol) symbol, direction
+        from bias_verdicts where horizon = ${horizon}
+        order by symbol, as_of desc
+      ),
+      latest_stage as (
+        select distinct on (symbol) symbol, stage
+        from signal_stages where horizon = ${horizon}
+        order by symbol, as_of desc
+      )
+      select
+        (select count(*)::int from latest_bias) as tracked,
+        (select count(*)::int from latest_bias where direction = 'BULLISH') as bullish,
+        (select count(*)::int from latest_bias where direction = 'BEARISH') as bearish,
+        (select count(*)::int from latest_stage where stage = 'READY') as ready,
+        (select count(*)::int from latest_stage where stage = 'BUILDING') as building,
+        (select count(*)::int from signal_candidates
+          where horizon = ${horizon} and status = 'pending_risk') as queued,
+        (select count(*)::int from risk_decisions
+          where horizon = ${horizon} and decision = 'APPROVED'
+            and evaluated_at > now() - interval '24 hours') as approved24h,
+        (select count(*)::int from risk_decisions
+          where horizon = ${horizon} and decision = 'REJECTED'
+            and evaluated_at > now() - interval '24 hours') as rejected24h,
+        (select count(*)::int from signals
+          where horizon = ${horizon}
+            and published_at > now() - interval '24 hours') as published24h,
+        (select count(*)::int from signals
+          where horizon = ${horizon}
+            and published_at > now() - interval '24 hours'
+            and snapshot->>'mode' = 'live') as live24h
+    `;
+    return rows[0] || empty;
+  } catch {
+    return empty;
+  }
+}
+
 export async function listMembers(householdId) {
   const sql = db();
   if (!sql) return [];

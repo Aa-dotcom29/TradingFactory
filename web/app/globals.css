@@ -561,6 +561,112 @@ td.num, th.num, td.mono, th.mono { text-align: right; font-family: var(--font-mo
 .pipe .node.terminal .n { color: var(--up); }
 
 /* =============================================================================
+   Status banner - the one loud element on a page
+   -----------------------------------------------------------------------------
+   Every other surface here is restrained, so exactly one element per page is
+   allowed to glow. It carries the state that must not be misread: whether the
+   machine is delivering, how many names are ready, whether this instance wants
+   a password. The tone is the message; nothing glows decoratively.
+   ============================================================================= */
+
+.banner-hud {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  padding: 15px 20px 16px;
+  border: 1px solid rgba(var(--tone-rgb), 0.5);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(var(--tone-rgb), 0.13) 0%, rgba(var(--tone-rgb), 0.02) 65%, transparent 100%),
+    var(--hull);
+  box-shadow:
+    0 0 40px -12px rgba(var(--tone-rgb), 0.6),
+    inset 0 1px 0 rgba(var(--tone-rgb), 0.22);
+  overflow: hidden;
+  margin: 0;
+}
+
+.banner-hud.up { --tone: var(--up); --tone-rgb: 46, 208, 127; }
+.banner-hud.down { --tone: var(--down); --tone-rgb: 255, 93, 82; }
+.banner-hud.warn { --tone: var(--warn); --tone-rgb: 255, 181, 71; }
+.banner-hud.sig { --tone: var(--sig); --tone-rgb: 86, 216, 240; }
+
+/* The neon rule along the top edge - the actual glow. */
+.banner-hud::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--tone);
+  box-shadow: 0 0 10px var(--tone), 0 0 30px var(--tone);
+}
+
+/* One slow sheen travelling across. This is the only ambient animation besides
+   the brand core, and both are disabled under prefers-reduced-motion. */
+.banner-hud::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent 38%, rgba(var(--tone-rgb), 0.11) 50%, transparent 62%);
+  background-size: 280% 100%;
+  animation: sheen 9s linear infinite;
+}
+@keyframes sheen {
+  from { background-position: 180% 0; }
+  to { background-position: -80% 0; }
+}
+
+.banner-hud .lamp {
+  width: 9px;
+  height: 9px;
+  color: var(--tone);
+  box-shadow: 0 0 12px currentColor, 0 0 24px currentColor;
+}
+
+.banner-hud .head {
+  flex: 1 1 auto;
+  min-width: 220px;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1.15;
+  text-transform: uppercase;
+  color: #ffffff;
+  text-shadow: 0 0 20px rgba(var(--tone-rgb), 0.75);
+}
+.banner-hud .facts { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.banner-hud .fact { display: flex; align-items: baseline; gap: 7px; }
+.banner-hud .fk {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+.banner-hud .fv {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 17px;
+  color: var(--ink);
+}
+
+.banner-hud .note {
+  flex: 1 0 100%;
+  margin: 0;
+  max-width: 92ch;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+
+/* =============================================================================
    News
    ============================================================================= */
 
@@ -706,5 +812,6 @@ input:focus, select:focus { outline: none; border-color: var(--sig); box-shadow:
    non-user-triggered animation in the interface. */
 @media (prefers-reduced-motion: reduce) {
   .brand .mark::after { animation: none; }
+  .banner-hud::after { animation: none; }
   * { transition: none !important; }
 }

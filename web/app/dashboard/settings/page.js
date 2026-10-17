@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
-import { getCurrentUser } from '@/lib/auth';
+import { getCurrentUser, authDisabled } from '@/lib/auth';
 import { listMembers } from '@/lib/queries';
 import { istDate } from '@/lib/format';
+import StatusBanner from '@/components/StatusBanner';
 import AddMemberForm from './AddMemberForm';
 
 export const dynamic = 'force-dynamic';
@@ -17,12 +18,36 @@ export default async function SettingsPage() {
 
   return (
     <div className="stack">
-      <div>
-        <h1 style={{ margin: '6px 0 2px', fontSize: 22 }}>Household settings</h1>
-        <p className="muted small" style={{ margin: 0 }}>
-          {user.household_name} - you are signed in as {user.email} ({user.role}).
-        </p>
+      <div className="page-head">
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <h1>Household settings</h1>
+          <p className="muted small" style={{ margin: '5px 0 0' }}>
+            {user.household_name} - you are signed in as {user.email} ({user.role}).
+          </p>
+        </div>
       </div>
+
+      {authDisabled() ? (
+        <StatusBanner
+          tone="down"
+          headline="Authentication disabled"
+          facts={[
+            { k: 'node env', v: process.env.NODE_ENV || 'development' },
+            { k: 'members', v: members.length },
+          ]}
+          note="This instance signs every visitor in without a password. The bypass is hard-gated on NODE_ENV !== 'production', so a deployed build cannot have it enabled - but do not expose this instance to a network while it is running."
+        />
+      ) : (
+        <StatusBanner
+          tone="up"
+          headline="Authentication enabled"
+          facts={[
+            { k: 'members', v: members.length },
+            { k: 'your role', v: user.role },
+          ]}
+          note="Every page requires a session cookie. Sessions are stored server-side and the database only ever holds a hash of the cookie token."
+        />
+      )}
 
       <section className="card">
         <h2>Members</h2>
