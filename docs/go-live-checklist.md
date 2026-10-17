@@ -143,7 +143,7 @@ any broker, by design.
   candidate is raised - but the session clock itself does not know about it.
 - **Evidence-ageing windows are per component, not per horizon** (see `evidence-ageing.md`).
 - **`bars_held` counts readings, not exchange bars**; `payload.heldMinutes` carries the real duration.
-- **The mobile layout is authored but not yet visually verified** on a real device.
+- **The mobile layout is verified by viewport width, not on a physical device.** Every route now has\n  zero page-level horizontal overflow at 360, 390, 414, 768, 1024 and 1280px, and the wide tables\n  scroll inside their own cards. A real-device pass (touch targets, iOS Safari chrome) is still worth\n  doing - see [`mobile-layout.md`](./mobile-layout.md).
 
 ## Hosting status
 
