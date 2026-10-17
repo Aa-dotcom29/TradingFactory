@@ -50,6 +50,11 @@ Nothing secret should ever be pasted into the dashboard or committed. `.env` is 
    (`npm run harness:schema`). A running deployment must do this once per upgrade; it is idempotent.
 3. After a cycle, `sources_health` should show `angel HEALTHY` in place of the Yahoo row, and price
    features should carry the `angel-live` provenance rather than `yahoo-delayed`.
+4. `npm run harness:telegram-check` sends one clearly-labelled test message to the configured chat.
+   It forces live mode for the test, so it works while `PUBLISH_MODE` is still `shadow`, and it
+   validates the bot token first - a bad token fails without sending anything. Use
+   `--no-send` to check the token alone. Do this before go-live day: an alert channel that has never
+   carried a message is not a verified alert channel.
 
 If the check fails on login, the usual causes are the wrong client code / PIN, a TOTP secret whose
 clock has drifted, or an unregistered public IP - SmartAPI requires the calling IP to be the app's
