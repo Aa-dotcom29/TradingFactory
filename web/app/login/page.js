@@ -14,8 +14,8 @@ export default async function LoginPage() {
   return (
     <div className="login-wrap">
       <div className="login-card">
-        <div className="brand" style={{ marginBottom: 14 }}>
-          <span className="dot" />
+        <div className="brand">
+          <span className="mark" aria-hidden="true" />
           <span>Trading Factory</span>
         </div>
         <h1>Sign in</h1>

@@ -41,19 +41,17 @@ export default async function HorizonPage({ params }) {
 
   return (
     <div className="stack">
-      <div className="card" style={{ background: 'var(--panel-2)' }}>
-        <div className="row-between">
-          <div>
-            <h1 style={{ margin: 0, fontSize: 20 }}>{horizon.label}</h1>
-            <p className="muted small" style={{ margin: '2px 0 0' }}>
-              {horizon.blurb} - cadence {horizon.cadence}
-            </p>
-          </div>
-          <span className="pill accent">{horizon.key}</span>
+      <div className="page-head">
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <h1>{horizon.label}</h1>
+          <p className="muted small" style={{ margin: '5px 0 0' }}>
+            {horizon.blurb} - cadence {horizon.cadence}
+          </p>
+          <p className="muted small" style={{ margin: '3px 0 0' }}>
+            Risk profile: {horizon.risk}. Manual execution only.
+          </p>
         </div>
-        <p className="small muted" style={{ margin: '10px 0 0' }}>
-          Risk profile: {horizon.risk}. Manual execution only.
-        </p>
+        <span className="pill accent">{horizon.key}</span>
       </div>
 
       <section className="card">

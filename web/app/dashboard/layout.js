@@ -3,28 +3,36 @@ import { getCurrentUser } from '@/lib/auth';
 import { databaseConfigured } from '@/lib/db';
 import NavTabs from '@/components/NavTabs';
 import LogoutButton from '@/components/LogoutButton';
+import RailStatus from '@/components/RailStatus';
 
 export const dynamic = 'force-dynamic';
 
+// The rail is the one loud element in the interface: identity on the left,
+// live state on the right. Everything else on the page stays quiet so this
+// strip is where the eye lands first.
 export default async function DashboardLayout({ children }) {
   const user = await getCurrentUser();
   if (!user) redirect('/login');
 
+  const mode = process.env.PUBLISH_MODE || 'shadow';
+
   return (
     <>
-      <header className="topbar">
+      <header className="rail">
         <div className="brand">
-          <span className="dot" />
-          <span>
-            Trading Factory <small>market intelligence</small>
-          </span>
+          <span className="mark" aria-hidden="true" />
+          <span>Trading Factory</span>
+          <span className="sub">market intelligence</span>
         </div>
+
         <div className="spacer" />
+
+        <RailStatus mode={mode} />
+
         <div className="user-chip">
           <span>
             <strong>{user.email}</strong>
-            <br />
-            {user.household_name} - {user.role}
+            {user.household_name} / {user.role}
           </span>
           <LogoutButton />
         </div>

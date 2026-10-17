@@ -177,14 +177,55 @@ export async function getFlowFeatures(limit = 10) {
 
 // Slice 3: the current bias verdict per symbol for one horizon. distinct-on gives the latest
 // row per symbol without needing a window function.
+// Verdicts are persisted only when a call materially changes, so the stored
+// sequence is the path of *changes*, not an evenly sampled series. The trend
+// column says so in its title, and the line is drawn oldest-to-newest so a
+// rising line always means the score rose.
+const TREND_POINTS = 12;
+
+async function attachScoreHistory(sql, rows) {
+  if (!rows.length) return rows;
+
+  let history = [];
+  try {
+    history = await sql`
+      select horizon, symbol, score, as_of from (
+        select horizon, symbol, score, as_of,
+               row_number() over (partition by horizon, symbol order by as_of desc) as rn
+        from bias_verdicts
+        where as_of > now() - interval '45 days'
+      ) t
+      where rn <= ${TREND_POINTS}
+      order by horizon, symbol, as_of asc
+    `;
+  } catch {
+    history = [];
+  }
+
+  if (!history.length) return rows.map((row) => ({ ...row, history: [] }));
+
+  const byKey = new Map();
+  for (const point of history) {
+    const key = `${point.horizon || ''}|${point.symbol}`;
+    const list = byKey.get(key);
+    if (list) list.push(Number(point.score));
+    else byKey.set(key, [Number(point.score)]);
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    history: byKey.get(`${row.horizon || ''}|${row.symbol}`) || [],
+  }));
+}
+
 export async function getBias(horizon, limit = 12) {
   const sql = db();
   if (!sql) return [];
   try {
-    return await sql`
+    const rows = await sql`
       select * from (
         select distinct on (symbol)
-          symbol, direction, score, confidence, coverage, as_of, components, evidence, config_version, provenance
+          symbol, horizon, direction, score, confidence, coverage, as_of, components, evidence, config_version, provenance
         from bias_verdicts
         where horizon = ${horizon}
         order by symbol, as_of desc
@@ -192,6 +233,7 @@ export async function getBias(horizon, limit = 12) {
       order by abs(score) desc, symbol asc
       limit ${limit}
     `;
+    return attachScoreHistory(sql, rows);
   } catch {
     return [];
   }
@@ -219,7 +261,8 @@ export async function getBiasOverview(limit = 6) {
       counts[row.direction] = (counts[row.direction] || 0) + 1;
       if (!asOf || row.as_of > asOf) asOf = row.as_of;
     }
-    return { rows: rows.slice(0, limit), counts, asOf };
+    const display = await attachScoreHistory(sql, rows.slice(0, limit));
+    return { rows: display, counts, asOf };
   } catch {
     return empty;
   }

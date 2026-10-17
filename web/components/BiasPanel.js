@@ -1,5 +1,6 @@
 import { istStamp, num, signed, directionTone, scoreTone } from '@/lib/format';
 import Provenance from '@/components/Provenance';
+import Sparkline from '@/components/Sparkline';
 
 // Slice 3 output: the bias meter's verdict per symbol. Score is [-1, 1] and confidence is how
 // much evidence actually backed it, so a name can lean bullish at 5% confidence without ever
@@ -49,6 +50,7 @@ export default function BiasPanel({ rows = [], showHorizon = false }) {
             <th>Bias</th>
             <th className="num">Score</th>
             <th className="num">Confidence</th>
+            <th className="num">Trend</th>
             <th>Evidence</th>
           </tr>
         </thead>
@@ -70,6 +72,16 @@ export default function BiasPanel({ rows = [], showHorizon = false }) {
               </td>
               <td className={`num mono tone-${directionTone(row.direction)}`}>{signed(row.score, 3)}</td>
               <td className="num mono">{num(Number(row.confidence) * 100, 0)}%</td>
+              <td className="num">
+                {/* Verdicts are stored on material change only, so this is the path of
+                    changes, not an evenly sampled series. The title says so. */}
+                <span
+                  className="trend-cell"
+                  title={`${row.symbol} ${row.horizon || ''}: score across the last ${row.history?.length || 0} stored verdicts, oldest first`}
+                >
+                  <Sparkline values={row.history} domain={[-1, 1]} width={92} height={24} label={`${row.symbol} score path`} />
+                </span>
+              </td>
               <td>{componentPills(row.components)}</td>
             </tr>
           ))}
