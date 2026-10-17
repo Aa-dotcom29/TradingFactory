@@ -123,6 +123,16 @@ test('a position with no price readings at all stays OPEN', () => {
   assert.equal(result.readings, 0);
 });
 
+test('a position that is never priced is settled with no verdict once its window elapses', () => {
+  const result = evaluate({}, [], { now: T0 + days(31), holdingDays: 30 });
+  assert.equal(result.status, STATUS.CLOSED);
+  assert.equal(result.result, RESULT.NO_PRICE_SOURCE);
+  assert.equal(result.unpriced, true);
+  assert.equal(result.pnlPct, null);
+  assert.equal(result.exit, null);
+  assert.match(result.reason, /no price source/);
+});
+
 test('an expired window that never touched a level closes as TIME at the last price in the window', () => {
   const result = evaluate({}, [{ at: at(10), price: 101 }], {
     now: T0 + days(2),
@@ -238,6 +248,18 @@ test('an option-premium plan is reported as awaiting a price source, never score
   ]);
   assert.equal(result.status, STATUS.AWAITING_PRICE_SOURCE);
   assert.match(result.reason, /option quote history/);
+});
+
+test('an option-premium plan is settled once its window elapses, not left open forever', () => {
+  const result = evaluate(
+    { instrument: 'OPTION', strike: 22000, option_type: 'CE' },
+    [{ at: at(10), price: 111 }],
+    { now: T0 + days(31), holdingDays: 30 },
+  );
+  assert.equal(result.status, STATUS.CLOSED);
+  assert.equal(result.result, RESULT.NO_PRICE_SOURCE);
+  assert.equal(result.pnlPct, null);
+  assert.equal(result.readings, 0);
 });
 
 test('planKind reads the explicit kind first, then the strike, then the instrument name', () => {

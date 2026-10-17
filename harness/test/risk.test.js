@@ -121,6 +121,18 @@ test('lossStreak reports null for no history and counts back to the first win', 
   assert.equal(lossStreak([{ result: 'STOPPED_OUT' }, { result: 'TARGET_HIT' }]), 1);
 });
 
+test('lossStreak skips a settled unpriced position instead of letting it end a streak', () => {
+  const rows = [
+    { result: 'NO_PRICE_SOURCE', pnl_pct: null }, // settled with no verdict, neither loss nor win
+    { pnl_pct: -1 },
+    { pnl_pct: -2 },
+    { pnl_pct: 3 },
+  ];
+  assert.equal(lossStreak(rows), 2);
+  // Administrative rows alone are still "no history", not "no losses".
+  assert.equal(lossStreak([{ result: 'NO_PRICE_SOURCE', pnl_pct: null }]), null);
+});
+
 test('summariseExposure counts only positions inside the holding window', () => {
   const now = Date.parse('2026-10-14T05:00:00Z');
   const rows = [

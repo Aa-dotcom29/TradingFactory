@@ -15,6 +15,7 @@ const RESULT = {
   TARGET: 'TARGET',
   STOP: 'STOP',
   TIME: 'TIME',
+  NO_PRICE_SOURCE: 'NO_PRICE_SOURCE', // settled with no verdict: the position could never be priced
 };
 
 const STATUS = {
@@ -84,6 +85,11 @@ function normalisePath(path) {
 // controls, so option plans are reported as awaiting a price source until option quotes are
 // persisted (W0 can write them as market_snapshots kind='QUOTE'). Refusing to score is the
 // honest answer; inventing one would poison everything downstream.
+// An option-premium plan's levels are quoted on the option, and the price history we hold is the
+// underlying - so the two are not comparable. While its window is open it is reported as awaiting
+// a price source; once the window elapses it is settled with no verdict (`NO_PRICE_SOURCE`) rather
+// than left open forever. Refusing to score is the honest answer; inventing a return would poison
+// everything downstream.
 function planKind(signal, plan) {
   const instrument = String((signal && signal.instrument) || '').toLowerCase();
   const explicit = String((plan && plan.kind) || '').toUpperCase();
@@ -139,20 +145,49 @@ function evaluateOutcome(options = {}) {
   if (!Number.isFinite(publishedAt) || publishedAt <= 0) {
     return { status: STATUS.UNEVALUABLE, ...base, reason: 'the signal has no publication time' };
   }
-  if (planKind(signal, plan) === 'OPTION') {
-    return {
-      status: STATUS.AWAITING_PRICE_SOURCE,
-      ...base,
-      reason: 'option-premium plan: needs option quote history, not the underlying price',
-    };
-  }
+  const windowMs = windowDays * 86400000;
 
-  const readings = normalisePath(options.path).filter((reading) => reading.at >= publishedAt);
+  // A plan is priced on the same instrument its levels are quoted on. An option-premium plan is
+  // not, because we hold underlying quotes and not option quotes, so its levels can never be
+  // judged honestly against this path.
+  const underlyingPriced = planKind(signal, plan) !== 'OPTION';
+  const readings = underlyingPriced
+    ? normalisePath(options.path).filter((reading) => reading.at >= publishedAt)
+    : [];
+
+  // Nothing to walk: either the plan can never be priced on this instrument, or no reading ever
+  // arrived. While the holding window is still open that is a position we are waiting on - OPEN for
+  // an underpriced plan, AWAITING_PRICE_SOURCE for one we cannot price at all. Once the window has
+  // elapsed the position is settled with no verdict and no pnl, so a plan that could never be
+  // priced stops accumulating as a permanent open position. It never invents an exit or a return.
   if (!readings.length) {
+    const reason = underlyingPriced
+      ? 'no price readings since publication'
+      : 'option-premium plan: needs option quote history, not the underlying price';
+    if (now >= publishedAt + windowMs) {
+      return {
+        status: STATUS.CLOSED,
+        ...base,
+        result: RESULT.NO_PRICE_SOURCE,
+        unpriced: true,
+        exit: null,
+        exitAt: null,
+        pnlPct: null,
+        mfePct: null,
+        maePct: null,
+        readings: 0,
+        heldMinutes: Math.round((now - publishedAt) / 60000),
+        heldDays: round((now - publishedAt) / 86400000, 3),
+        windowDays,
+        target,
+        stop,
+        reason: `${reason}; the ${windowDays}d holding window elapsed with no price source`,
+      };
+    }
     return {
-      status: STATUS.OPEN,
+      status: underlyingPriced ? STATUS.OPEN : STATUS.AWAITING_PRICE_SOURCE,
       ...base,
-      reason: 'no price readings since publication',
+      reason,
       readings: 0,
       target,
       stop,
@@ -196,7 +231,6 @@ function evaluateOutcome(options = {}) {
     }
   }
 
-  const windowMs = windowDays * 86400000;
   const elapsedAtLastReading = readings[readings.length - 1].at - publishedAt;
   const longestWait = Math.max(elapsedAtLastReading, now - publishedAt);
 

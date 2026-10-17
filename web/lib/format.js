@@ -188,6 +188,7 @@ export function outcomeTone(pnlPct) {
 
 // How a position ended. TARGET and STOP are the plan working as written; TIME means the horizon
 // ran out with neither level reached, which is neither a win nor a loss until you read the P&L.
+// NO_PRICE_SOURCE means it was settled with no verdict at all - nothing could price it.
 export function resultTone(result) {
   const v = String(result || '').toUpperCase();
   if (v === 'TARGET') return 'up';
@@ -201,5 +202,6 @@ export function resultLabel(result) {
   if (v === 'TARGET') return 'target hit';
   if (v === 'STOP') return 'stopped out';
   if (v === 'TIME') return 'window ended';
+  if (v === 'NO_PRICE_SOURCE') return 'no price source';
   return v ? v.toLowerCase() : 'open';
 }

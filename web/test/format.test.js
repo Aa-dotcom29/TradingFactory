@@ -123,10 +123,12 @@ test('exit reasons colour by what ended the trade, not by profit', () => {
   assert.equal(resultTone('TARGET'), 'up');
   assert.equal(resultTone('STOP'), 'down');
   assert.equal(resultTone('TIME'), 'warn');
+  assert.equal(resultTone('NO_PRICE_SOURCE'), 'muted');
   assert.equal(resultTone(undefined), 'muted');
   assert.equal(resultLabel('TARGET'), 'target hit');
   assert.equal(resultLabel('STOP'), 'stopped out');
   assert.equal(resultLabel('TIME'), 'window ended');
+  assert.equal(resultLabel('NO_PRICE_SOURCE'), 'no price source');
   assert.equal(resultLabel(null), 'open');
 });
 

@@ -18,8 +18,10 @@
 //
 //   * It does not score an option-premium plan against the underlying price. The plan's levels
 //     are premiums and the readings are spot, so the resulting number would be confident nonsense
-//     fed straight into the loss controls. Those positions stay open and are reported as awaiting
-//     a price source until option quotes are persisted.
+//     fed straight into the loss controls. Such a position is reported as awaiting a price source
+//     while its window is open, and settled with no verdict once the window elapses - so it neither
+//     invents a return nor stays open forever. Persisting option quotes is what would let one be
+//     scored properly.
 //   * It does not trust the storage time of a quote. A quote is dated by the market timestamp it
 //     carries, so a Friday close re-stored on Monday cannot masquerade as fresh momentum.
 //   * It does not apply a config change. It may propose one, written as a `candidate` row in
@@ -31,7 +33,7 @@ const db = require('../db');
 const queue = require('../queue');
 const { TOPICS } = require('../topics');
 const { DEFAULT_RISK_CONFIG, resolveRiskConfig } = require('../risk');
-const { STATUS, evaluateOutcome, scoreOutcomes, proposeConfigChange } = require('../outcome');
+const { STATUS, RESULT, evaluateOutcome, scoreOutcomes, proposeConfigChange } = require('../outcome');
 
 const log = require('../logger').child({ module: 'w7' });
 
@@ -166,12 +168,17 @@ class EvaluateWorker {
   // collides with the existing row instead of inventing a second outcome for one position.
   async recordOutcome(signal, evaluation, configVersion) {
     const sql = this.sql;
-    const state = evaluation.result === 'TIME' ? 'EXPIRED' : 'EXITED';
+    const settled = evaluation.result === RESULT.NO_PRICE_SOURCE || evaluation.result === RESULT.TIME;
+    const state = settled ? 'EXPIRED' : 'EXITED';
+    const reason = evaluation.unpriced
+      ? `${evaluation.result}: ${evaluation.reason}`
+      : `${evaluation.result} at ${evaluation.exit} (${evaluation.pnlPct}%) after ${evaluation.heldMinutes} minute(s)`;
     const payload = {
       engineVersion: ENGINE_VERSION,
       configVersion,
       priceSource: QUOTE_FEATURE_SET,
       result: evaluation.result,
+      unpriced: Boolean(evaluation.unpriced),
       ambiguous: evaluation.ambiguous,
       exitAt: evaluation.exitAt,
       heldMinutes: evaluation.heldMinutes,
@@ -202,9 +209,7 @@ class EvaluateWorker {
     const previous = await this.latestEventState(signal.id);
     await sql`
       insert into signal_events (signal_id, previous_state, new_state, reason, market_snapshot)
-      values (${signal.id}::uuid, ${previous}, ${state},
-              ${`${evaluation.result} at ${evaluation.exit} (${evaluation.pnlPct}%) after ${evaluation.heldMinutes} minute(s)`},
-              ${sql.json(payload)})
+      values (${signal.id}::uuid, ${previous}, ${state}, ${reason}, ${sql.json(payload)})
     `;
     return { created: true, state };
   }
@@ -330,7 +335,7 @@ class EvaluateWorker {
     const proposedVersion = `risk-w7-${stamp}`;
     const inserted = await sql`
       insert into config_registry (version, family, created_by, status, metrics, config)
-      values (${proposedVersion}, ${PROPOSAL_FAMILY}, ${PROPOSAL_AUTHOR}, 'candidate',
+      values (${proposedVersion}, ${CONFIG_FAMILY}, ${PROPOSAL_AUTHOR}, 'candidate',
               ${sql.json({
                 reason: proposal.reason,
                 change: proposal.change,

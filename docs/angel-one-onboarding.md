@@ -44,7 +44,7 @@ tells you whether it worked, and it never prints a secret.
   price component ages a real-time read exactly (see `evidence-ageing.md`).
 - **The option chain and Greeks** (`optionGreek`), which Yahoo cannot provide at all.
 - The basis for **persisting option quotes**, which is what the evaluator (W7) needs before an
-  option-premium position can ever be closed. That is not built yet - see the limitation below.
+  option-premium position can be scored properly. That is not built yet - see the limitation below.
 
 ## Rate limits to keep in mind
 
@@ -70,10 +70,12 @@ straddles midnight simply logs in again.
 
 ## Honest limitations
 
-- **Option positions still cannot close.** Angel exposes the option chain and Greeks, but the
-  harness does not yet persist option quotes as price readings, so W7 still refuses to score an
-  option-premium plan (`AWAITING_PRICE_SOURCE`). This is the next Angel One task, and it is
-  deliberately not being written blind - it should be built against a live account so the option
-  response shape is verified rather than assumed.
+- **Option positions cannot be scored yet.** Angel exposes the option chain and Greeks, but the
+  harness does not yet persist option quotes as price readings, so W7 refuses to score an
+  option-premium plan on the underlying (`AWAITING_PRICE_SOURCE`). Such a position now settles with
+  no verdict (`NO_PRICE_SOURCE`) once its holding window runs out, rather than staying open forever.
+  Persisting option quotes is the next Angel One task, and it is deliberately not being written
+  blind - it should be built against a live account so the option response shape is verified rather
+  than assumed.
 - **The static IP is a real constraint.** A residential connection without a static IP will work
   intermittently and then break when the IP rotates. The 24/7 host is the fix.

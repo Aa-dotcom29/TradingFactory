@@ -196,14 +196,17 @@ Totals: harness tests **152/152** (34 new), web tests **22/22** (2 new), selfche
 
 ## Known limitations, stated plainly
 
-1. **A position that is never priced stays open.** If a symbol stops being polled, no readings arrive,
-   no level is ever reached, and no window will close it - the window check requires at least one
-   reading. The risk gate is unaffected (its exposure window is measured from `published_at`
-   regardless), and the dashboard shows the position as `open`, but it will not settle by itself.
-   This is visible rather than silent, which is why it is acceptable for now.
-2. **Option positions never close.** By design, until option quotes are persisted. Every
-   option-premium signal therefore holds its exposure slot for the full holding window and never
-   contributes an outcome. The dashboard says `awaiting price source` on exactly these rows.
+1. **A position that is never priced settles with no verdict once its window elapses.** If a symbol
+   stops being polled, no readings arrive and no level is ever reached, so there is nothing to judge.
+   Instead of staying open forever, the position is closed as `NO_PRICE_SOURCE` with no exit and no
+   pnl once the horizon's holding window has run out - it settles the ledger without inventing a
+   return, and the risk gate's loss streak skips it rather than reading it as a break. While the
+   window is still open it simply shows as `open`.
+2. **Option positions close only when their window elapses.** By design, until option quotes are
+   persisted, an option-premium plan cannot be scored on the underlying. It shows as
+   `awaiting price source` while its window is open and settles as `NO_PRICE_SOURCE` once the window
+   runs out, so it holds no exposure slot forever. Persisting option quotes is what would let one be
+   scored properly.
 3. **`bars_held` counts readings, not bars.** With a quote polled every few seconds, one reading is
    one observation. It is honest but coarse; `payload.heldMinutes` carries the real duration.
 4. **Excursion uses the readings, not intra-bar extremes.** The quote payload's `high`/`low` are the

@@ -124,20 +124,27 @@ function summariseExposure(signals, config, now = Date.now()) {
 // Consecutive losses counting back from the most recent closed trade. A null result means
 // "there is no history", which the gate reports as SKIPPED rather than as a clean record.
 const LOSS_RESULTS = ['LOSS', 'STOPPED_OUT', 'STOP_HIT', 'FAILED'];
+// Settled with no verdict: a position that could never be priced. It is neither a loss nor a win,
+// so it must not be read as a break in a real losing streak - it is skipped, not counted.
+const NEUTRAL_RESULTS = ['NO_PRICE_SOURCE'];
 
 function lossStreak(outcomes) {
-  if (!Array.isArray(outcomes) || !outcomes.length) return null;
+  const rows = Array.isArray(outcomes) ? outcomes : [];
+  if (!rows.length) return null;
   let streak = 0;
-  for (const outcome of outcomes) {
+  let sawVerdict = false;
+  for (const outcome of rows) {
     const pnl = num(outcome && outcome.pnl_pct);
     const result = String((outcome && outcome.result) || '').toUpperCase();
+    if (pnl === null && NEUTRAL_RESULTS.some((token) => result.includes(token))) continue;
+    sawVerdict = true;
     const isLoss = pnl !== null
       ? pnl < 0
       : LOSS_RESULTS.some((token) => result.includes(token));
     if (!isLoss) break;
     streak += 1;
   }
-  return streak;
+  return sawVerdict ? streak : null;
 }
 
 function summariseOutcomes(rows, todayPnlPct = null, lastLossAt = null, todayCount = 0) {

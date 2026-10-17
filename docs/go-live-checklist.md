@@ -114,8 +114,9 @@ If a delivery fails, the event is `DELIVERY_FAILED`, the publisher records a `WA
   fatal, and the pipeline falls back to Yahoo for prices.
 - `risk_decisions` - why anything was approved, rejected or deferred, gate by gate. A `DEFERRED` after
   hours is correct, not a fault.
-- The evaluator's `sources_health` row - `N closed of M open`. It cannot close an option-premium
-  position yet (see the limitation below), so option ideas stay open by design.
+- The evaluator's `sources_health` row - `N closed of M open`. An option-premium position cannot be
+  scored on the underlying, so it waits as `awaiting a price source` until its holding window runs
+  out, then settles as `NO_PRICE_SOURCE` rather than staying open.
 - Dashboard -> proposals - the evaluator's one-knob learning suggestions appear as `candidate` rows
   and are inert until you approve them with `npm run harness:config -- --approve=<version>`.
 
@@ -131,9 +132,11 @@ any broker, by design.
 
 ## Known limitations at go-live (honest list)
 
-- **Option positions never close.** Greeks and the chain are read from Angel One, but option quotes
-  are not yet persisted as a price path, so the evaluator refuses to score an option-premium plan
-  (`AWAITING_PRICE_SOURCE`). Spot/futures plans are scored normally. The next Angel One task.
+- **Option positions cannot be scored properly yet.** Greeks and the chain are read from Angel One,
+  but option quotes are not yet persisted as a price path, so the evaluator refuses to score an
+  option-premium plan on the underlying (`AWAITING_PRICE_SOURCE`) and settles it as
+  `NO_PRICE_SOURCE` once its holding window runs out. Spot/futures plans are scored normally.
+  Persisting option quotes is the next Angel One task.
 - **A position with no price path is never settled.** The evaluator waits for evidence rather than
   inventing an exit.
 - **Public holidays are not modelled.** A weekday holiday simply yields no fresh evidence, so no
