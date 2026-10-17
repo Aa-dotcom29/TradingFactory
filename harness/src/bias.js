@@ -52,6 +52,15 @@ const DEFAULT_BIAS_CONFIG = {
     momentumSpan: 0.01, // a 1% move from previous close saturates the momentum component
     momentumWeight: 0.6,
     rangeWeight: 0.4,
+    // Quote ageing. The score always reflects the last known price, but its confidence is cut
+    // when that price is old, and again when the exchange is shut: outside a session the last
+    // close is a settled fact, not current momentum. `freshMinutes` is set to the delay the
+    // Yahoo fallback is known to carry, so a normal delayed read is not punished, while a feed
+    // that has genuinely stalled decays toward `staleConfidenceFloor` by `maxAgeMinutes`.
+    freshMinutes: 15,
+    maxAgeMinutes: 60,
+    staleConfidenceFloor: 0.2,
+    closedSessionConfidence: 0.2,
   },
   // Verdicts are only written when they say something new, so 24/7 operation does not write an
   // identical row every minute. History stays complete enough to forward-fill for backtesting.
@@ -203,7 +212,33 @@ function flowSignal(flow, config) {
   };
 }
 
-function priceSignal(quote, config) {
+// The exchange timestamp of a quote, or the moment we captured it, as epoch milliseconds. Yahoo
+// carries `quoteTime` (the exchange's own time); rows that do not (e.g. Angel today) fall back to
+// the feature `as_of` the worker passes in. Returns null when nothing can be dated, in which case
+// age is simply not penalised here - only the session check applies.
+function quoteAgeMinutes(quote, options = {}) {
+  if (!options.now) return null;
+  const raw = (quote && quote.quoteTime) || options.asOf || null;
+  if (!raw) return null;
+  const at = raw instanceof Date ? raw.getTime() : Date.parse(raw);
+  if (!Number.isFinite(at)) return null;
+  return Math.max(0, (new Date(options.now).getTime() - at) / 60000);
+}
+
+// 1 while the quote is fresh, then a straight line down to the floor at maxAgeMinutes. An unknown
+// age scores 1: we do not invent staleness we cannot measure.
+function freshnessFactor(ageMinutes, priceConfig) {
+  if (ageMinutes === null) return 1;
+  const fresh = num(priceConfig.freshMinutes) ?? 0;
+  const max = num(priceConfig.maxAgeMinutes) ?? fresh;
+  const floor = clamp(num(priceConfig.staleConfidenceFloor) ?? 0, 0, 1);
+  if (ageMinutes <= fresh || max <= fresh) return 1;
+  if (ageMinutes >= max) return floor;
+  const decayed = 1 - (ageMinutes - fresh) / (max - fresh);
+  return clamp(decayed, floor, 1);
+}
+
+function priceSignal(quote, config, options = {}) {
   if (!quote) return unavailable('price', 'no quote for this symbol');
   const ltp = num(quote.ltp);
   const close = num(quote.close);
@@ -223,12 +258,30 @@ function priceSignal(quote, config) {
   const wRange = range === null ? 0 : config.price.rangeWeight;
   const score = clamp((momentum * wMomentum + (range ?? 0) * wRange) / (wMomentum + wRange), -1, 1);
 
+  // Age the read. The direction of the last close is still information, so the score is kept; it
+  // is the confidence that carries the "this is not a live tick" warning, and confidence is what
+  // the direction threshold turns on. Outside a session every read is a settled prior, so it is
+  // capped at `closedSessionConfidence` regardless of when we captured it.
+  const ageMinutes = quoteAgeMinutes(quote, options);
+  const freshness = freshnessFactor(ageMinutes, config.price);
+  const marketClosed = options.marketOpen === false;
+  const closedFactor = marketClosed ? clamp(num(config.price.closedSessionConfidence) ?? 1, 0, 1) : 1;
+  const baseConfidence = range === null ? 0.7 : 1;
+  const confidence = clamp(baseConfidence * freshness * closedFactor, 0, 1);
+
+  const notes = [];
+  if (ageMinutes !== null) notes.push(`quote ${Math.round(ageMinutes)}m old`);
+  if (marketClosed) notes.push('market closed: last close is not live');
+  else if (freshness < 1) notes.push(`aged to ${round(freshness, 2)}`);
+
   return {
     key: 'price',
     available: true,
     score,
-    confidence: range === null ? 0.7 : 1,
-    detail: `ltp ${ltp} vs prev close ${close} (${round(movePct * 100, 2)}%)${range === null ? '' : `, range position ${round(range, 3)}`}`,
+    confidence,
+    detail: `ltp ${ltp} vs prev close ${close} (${round(movePct * 100, 2)}%)`
+      + (range === null ? '' : `, range position ${round(range, 3)}`)
+      + (notes.length ? ` [${notes.join('; ')}]` : ''),
   };
 }
 
@@ -314,8 +367,10 @@ function combineVerdict({ symbol, horizon, signals, config }) {
   };
 }
 
-// Builds one verdict per horizon for a symbol from the feature maps the worker loaded.
-function verdictsForSymbol({ symbol, features, config }) {
+// Builds one verdict per horizon for a symbol from the feature maps the worker loaded. `now` and
+// `marketOpen` are the session context the worker resolved; `quoteAsOf` dates rows that carry no
+// exchange timestamp of their own.
+function verdictsForSymbol({ symbol, features, config, now, marketOpen, quoteAsOf }) {
   const news = features.news ? features.news.get(symbol) : null;
   const flow = features.flow ? features.flow.get(symbol) : null;
   const quote = features.quote ? features.quote.get(symbol) : null;
@@ -326,7 +381,7 @@ function verdictsForSymbol({ symbol, features, config }) {
     signals: {
       news: newsSignal(news, config),
       flow: flowSignal(flow, config),
-      price: priceSignal(quote, config),
+      price: priceSignal(quote, config, { now, marketOpen, asOf: quoteAsOf }),
     },
     config,
   }));
@@ -357,6 +412,8 @@ module.exports = {
   newsSignal,
   flowSignal,
   priceSignal,
+  quoteAgeMinutes,
+  freshnessFactor,
   combineVerdict,
   verdictsForSymbol,
   isMaterialChange,

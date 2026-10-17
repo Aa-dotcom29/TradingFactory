@@ -234,13 +234,15 @@ the *origin* of every number explicit.
 - **Nothing is invented.** A symbol Yahoo does not answer for produces a per-symbol error, never a
   fabricated price; the batch keeps going and the failures are counted in `sources_health`.
 
-**Known limitation, stated honestly.** A quote carries its own exchange timestamp
-(`values.quoteTime`) and a capture time (`features.as_of`), but the `price` component does not yet
-age-weight them: outside a session, the most recent close is still read as if it were current
-momentum. Practically this is inert today, because the risk gate defers every candidate outside
-NSE hours, and W0 re-polls continuously during a session. It should be addressed before intraday
-go-live, either by down-weighting a stale quote in `priceSignal` or by refusing to emit a `price`
-component whose age exceeds the horizon's tolerance.
+**Quote ageing (fixed).** A quote carries its own exchange timestamp (`values.quoteTime`) and a
+capture time (`features.as_of`). The `price` component now dates each read from `quoteTime`
+(falling back to `as_of` when a feed omits it) and cuts confidence as the read ages, reaching a
+floor at `maxAgeMinutes`. Outside the NSE session it goes further: the most recent close is a
+settled prior, not current momentum, so the component is capped at `closedSessionConfidence`
+(0.2) and its detail records `market closed: last close is not live`. It still votes its
+direction, but at a confidence that cannot carry a call by itself. `freshMinutes` is set to the
+Yahoo fallback's known delay so a normal delayed read is not punished. The session clock is shared
+with the risk gate via `harness/src/session.js`, so both stages agree on when the market is open.
 
 ## Optional LLM
 

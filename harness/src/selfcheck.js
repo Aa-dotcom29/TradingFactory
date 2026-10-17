@@ -265,6 +265,25 @@ async function pureFunctionChecks() {
     priceSignal({ ltp: yahooQuote.ltp, close: yahooQuote.close, high: yahooQuote.high, low: yahooQuote.low }, biasConfig).available === true,
   );
 
+  const T_Q = Date.parse('2026-10-14T04:00:00Z'); // Wednesday 09:30 IST
+  const agedQuote = priceSignal(
+    { ltp: 1010, close: 1000, high: 1012, low: 998, quoteTime: new Date(T_Q - 50 * 60000).toISOString() },
+    biasConfig,
+    { now: T_Q, marketOpen: true },
+  );
+  const shutQuote = priceSignal(
+    { ltp: 1010, close: 1000, high: 1012, low: 998 },
+    biasConfig,
+    { now: Date.parse('2026-10-17T12:00:00Z'), marketOpen: false },
+  );
+  record(
+    'bias price signal ages a stale quote and honours the session',
+    agedQuote.confidence < 1 && agedQuote.confidence >= biasConfig.price.staleConfidenceFloor
+      && agedQuote.score > 0
+      && shutQuote.confidence <= biasConfig.price.closedSessionConfidence,
+    `aged=${agedQuote.confidence} closed=${shutQuote.confidence}`,
+  );
+
   // --- Slice 7: the evaluator -------------------------------------------------------------
   const T7 = Date.parse('2026-10-14T05:00:00Z');
   const t7 = (minutes) => new Date(T7 + minutes * 60000).toISOString();

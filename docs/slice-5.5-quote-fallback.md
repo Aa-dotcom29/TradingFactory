@@ -138,12 +138,15 @@ Test totals: harness 118/118 (11 new), web 20/20 (1 new), `harness:selfcheck` 31
 
 ## Known limitations, stated plainly
 
-1. **A quote is not aged.** `values.quoteTime` records the exchange timestamp and `features.as_of`
-   records when we captured it, but `priceSignal` does not yet down-weight a stale quote. Outside a
-   session the last close is still read as current momentum (the +2.31% NIFTY figure above is
-   Friday's session, read on Saturday). This is inert today because the risk gate defers every
-   candidate outside NSE hours and W0 re-polls continuously during one, but it must be fixed before
-   intraday go-live.
+1. **A quote is now aged (fixed).** `values.quoteTime` records the exchange timestamp and
+   `features.as_of` records when we captured it. `priceSignal` now dates the read from `quoteTime`
+   (falling back to `as_of` for feeds that do not carry one) and cuts its confidence as the read
+   gets older; outside the NSE session the last close is treated as a settled prior, not current
+   momentum. The score still reflects the last close, but a closed-market price read is capped at
+   0.2 confidence, so it can no longer carry a call on its own. The +2.31% NIFTY figure above
+   (Friday's session, read on Saturday) is now tagged `market closed: last close is not live`.
+   Remaining caveat: news and flow components are still not aged - only the price leg is, which
+   was the specific defect this note recorded.
 2. **Yahoo is delayed and unofficial.** Roughly fifteen minutes intraday, no SLA, no key, and it
    could change or rate-limit without notice. It is a bootstrap feed, not the target state. Angel
    One remains the authoritative source and the watermark on the pills is there to keep that

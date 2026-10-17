@@ -19,6 +19,7 @@ const config = require('../config');
 const db = require('../db');
 const queue = require('../queue');
 const { TOPICS } = require('../topics');
+const { marketSession } = require('../session');
 const {
   ENGINE_VERSION,
   DEFAULT_BIAS_CONFIG,
@@ -171,10 +172,20 @@ class BiasWorker {
       const newsEntities = [...newsSet.map.entries()].map(([symbol, values]) => ({ symbol, values }));
       const universe = trackedSymbols({ config, newsEntities });
       const features = { flow: flowSet.map, news: newsSet.map, quote: quoteSet.map };
+      // The session decides whether a price read is a live tick or a settled prior. The meter
+      // never asks the clock itself, so a replayed `now` reproduces the same verdicts.
+      const session = marketSession(now);
 
       const verdicts = [];
       for (const symbol of universe) {
-        for (const verdict of verdictsForSymbol({ symbol, features, config: biasConfig })) {
+        for (const verdict of verdictsForSymbol({
+          symbol,
+          features,
+          config: biasConfig,
+          now,
+          marketOpen: session.open,
+          quoteAsOf: quoteSet.asOf,
+        })) {
           // A verdict with no evidence at all is not a verdict; skip rather than publish a
           // NEUTRAL that only means "we know nothing about this symbol".
           const anyEvidence = Object.values(verdict.components).some((component) => component.available);
@@ -224,6 +235,7 @@ class BiasWorker {
             confidence: verdict.confidence,
             coverage: verdict.coverage,
             asOf,
+            marketOpen: session.open,
             flowAsOf: flowSet.asOf ? new Date(flowSet.asOf).toISOString() : null,
             configVersion: version,
             engineVersion: ENGINE_VERSION,

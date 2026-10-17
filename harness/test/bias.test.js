@@ -11,6 +11,7 @@ const {
   newsSignal,
   flowSignal,
   priceSignal,
+  quoteAgeMinutes,
   combineVerdict,
   verdictsForSymbol,
   isMaterialChange,
@@ -102,6 +103,50 @@ test('priceSignal scores a move up from the previous close as positive', () => {
   assert.equal(up.confidence, 1);
   assert.equal(priceSignal(null, config).available, false);
   assert.equal(priceSignal({ ltp: 100 }, config).available, false);
+});
+
+test('priceSignal ages a quote by its exchange timestamp within a session', () => {
+  const now = Date.parse('2026-10-14T04:00:00Z'); // Wednesday 09:30 IST, session open
+  const freshQuote = { ...UP_QUOTE, quoteTime: new Date(now - 2 * 60000).toISOString() };
+  const staleQuote = { ...UP_QUOTE, quoteTime: new Date(now - 45 * 60000).toISOString() };
+
+  const fresh = priceSignal(freshQuote, config, { now, marketOpen: true });
+  const stale = priceSignal(staleQuote, config, { now, marketOpen: true });
+
+  assert.equal(fresh.confidence, 1);
+  assert.ok(stale.confidence < fresh.confidence, `fresh=${fresh.confidence} stale=${stale.confidence}`);
+  assert.ok(stale.confidence >= config.price.staleConfidenceFloor, `confidence=${stale.confidence}`);
+  assert.ok(stale.score > 0, 'the last close still carries direction; only its confidence is cut');
+  assert.ok(stale.detail.includes('old'));
+});
+
+test('priceSignal stops calling a closed-market close live', () => {
+  const now = Date.parse('2026-10-17T12:00:00Z'); // Saturday, NSE shut
+  const fridayClose = { ...UP_QUOTE, quoteTime: new Date(now - 18 * 3600000).toISOString() };
+  assert.ok(quoteAgeMinutes(fridayClose, { now }) > config.price.maxAgeMinutes);
+
+  const aged = priceSignal(fridayClose, config, { now, marketOpen: false });
+  assert.ok(aged.confidence <= config.price.closedSessionConfidence, `confidence=${aged.confidence}`);
+  assert.ok(aged.confidence > 0);
+  assert.ok(aged.detail.includes('market closed'));
+
+  // A quote with no exchange timestamp of its own (the Angel shape today) is still capped by the
+  // session alone, so the fix does not depend on every feed carrying `quoteTime`.
+  const undated = priceSignal(UP_QUOTE, config, { now, marketOpen: false });
+  assert.ok(undated.confidence <= config.price.closedSessionConfidence, `confidence=${undated.confidence}`);
+});
+
+test('verdictsForSymbol will not raise an intraday call from a closed-market close alone', () => {
+  const now = Date.parse('2026-10-17T12:00:00Z'); // Saturday
+  const features = {
+    news: new Map(),
+    flow: new Map(),
+    quote: new Map([['NIFTY', { ...UP_QUOTE, quoteTime: new Date(now - 18 * 3600000).toISOString() }]]),
+  };
+  const verdicts = verdictsForSymbol({ symbol: 'NIFTY', features, config, now, marketOpen: false, quoteAsOf: now });
+  const intraday = verdicts.find((v) => v.horizon === 'INTRADAY');
+  assert.equal(intraday.direction, 'NEUTRAL');
+  assert.ok(intraday.confidence < config.thresholds.minConfidence, `confidence=${intraday.confidence}`);
 });
 
 test('combineVerdict calls a direction only above the confidence floor', () => {

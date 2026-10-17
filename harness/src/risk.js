@@ -24,6 +24,7 @@
 //               proposal stays pending and is re-evaluated on the next tick.
 
 const { HORIZONS } = require('./topics');
+const { DEFAULT_SESSION, istClock, marketSession } = require('./session');
 
 const CHECK_STATES = ['PASS', 'FAIL', 'DEFER', 'SKIPPED'];
 const DECISIONS = ['APPROVED', 'REJECTED', 'DEFERRED'];
@@ -42,12 +43,7 @@ const DEFAULT_RISK_CONFIG = {
     // false stops all publishing (fail-closed). A maintenance switch, never a bypass.
     enabled: true,
     killSwitch: false,
-    session: {
-      enforce: true,
-      openMinutes: 555, // 09:15 IST
-      closeMinutes: 930, // 15:30 IST
-      weekdaysOnly: true,
-    },
+    session: { ...DEFAULT_SESSION },
     minConfidence: 0.4,
     minRewardRisk: 1.5,
     liquidityRequired: true,
@@ -95,35 +91,8 @@ function horizonValue(map, horizon, fallback) {
 // ---------------------------------------------------------------------------
 // The exchange session
 // ---------------------------------------------------------------------------
-// NSE trades in IST. The harness may run anywhere, so the session check is done on an explicit
-// IST offset rather than the host timezone. Public holidays are not modelled: a holiday simply
-// produces no fresh evidence upstream, so no candidate is raised in the first place.
-function istClock(now = Date.now()) {
-  const shifted = new Date(new Date(now).getTime() + 5.5 * 3600 * 1000);
-  return {
-    weekday: shifted.getUTCDay(), // 0 = Sunday
-    minutes: shifted.getUTCHours() * 60 + shifted.getUTCMinutes(),
-    date: shifted.toISOString().slice(0, 10),
-  };
-}
-
-const hhmm = (minutes) =>
-  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
-
-function marketSession(now = Date.now(), session = DEFAULT_RISK_CONFIG.gates.session) {
-  const clock = istClock(now);
-  const window = `${hhmm(session.openMinutes)}-${hhmm(session.closeMinutes)} IST`;
-  if (session.weekdaysOnly && (clock.weekday === 0 || clock.weekday === 6)) {
-    return { ...clock, open: false, reason: `NSE is closed at the weekend (session ${window})` };
-  }
-  if (clock.minutes < session.openMinutes) {
-    return { ...clock, open: false, reason: `before the NSE open (session ${window})` };
-  }
-  if (clock.minutes >= session.closeMinutes) {
-    return { ...clock, open: false, reason: `after the NSE close (session ${window})` };
-  }
-  return { ...clock, open: true, reason: null };
-}
+// `istClock` and `marketSession` live in `../session` so the bias meter's price component can age
+// a quote against the same clock the gate uses. They are re-exported below for existing callers.
 
 // ---------------------------------------------------------------------------
 // Context summaries (pure, so the exposure and loss rules are testable without a database)
