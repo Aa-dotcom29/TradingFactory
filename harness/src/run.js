@@ -151,6 +151,8 @@ async function main() {
     timers.push(setInterval(makeGuard('market', () => ingest.runMarket()), config.poll.marketMs));
     timers.push(setInterval(makeGuard('flow', () => ingest.runFlow()), config.poll.flowMs));
     timers.push(setInterval(makeGuard('news', () => ingest.runNews()), config.poll.newsMs));
+    // Option premiums are polled on the market cadence, alongside the underlying quotes they hedge.
+    timers.push(setInterval(makeGuard('options', () => ingest.runOptionQuotes()), config.poll.marketMs));
   }
   if (news) {
     await news.runOnce();

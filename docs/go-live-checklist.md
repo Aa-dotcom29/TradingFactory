@@ -44,9 +44,11 @@ Nothing secret should ever be pasted into the dashboard or committed. `.env` is 
 ## Phase A - verify the feeds (no market session required)
 
 1. `npm run harness:angel-check` must end with `Angel One is ready.` It checks credentials, login +
-   TOTP, the instrument master, a FULL quote (and whether the exchange timestamp is present) and
-   option greeks, printing PASS/FAIL for each.
-2. After a cycle, `sources_health` should show `angel HEALTHY` in place of the Yahoo row, and price
+   TOTP, the instrument master, a FULL quote (and whether the exchange timestamp is present), an
+   at-the-money option premium and option greeks, printing PASS/FAIL for each.
+2. Apply the schema, so a database upgraded from an earlier build picks up the latest migration
+   (`npm run harness:schema`). A running deployment must do this once per upgrade; it is idempotent.
+3. After a cycle, `sources_health` should show `angel HEALTHY` in place of the Yahoo row, and price
    features should carry the `angel-live` provenance rather than `yahoo-delayed`.
 
 If the check fails on login, the usual causes are the wrong client code / PIN, a TOTP secret whose
@@ -114,9 +116,10 @@ If a delivery fails, the event is `DELIVERY_FAILED`, the publisher records a `WA
   fatal, and the pipeline falls back to Yahoo for prices.
 - `risk_decisions` - why anything was approved, rejected or deferred, gate by gate. A `DEFERRED` after
   hours is correct, not a fault.
-- The evaluator's `sources_health` row - `N closed of M open`. An option-premium position cannot be
-  scored on the underlying, so it waits as `awaiting a price source` until its holding window runs
-  out, then settles as `NO_PRICE_SOURCE` rather than staying open.
+- The evaluator's `sources_health` row - `N closed of M open`. An option-premium position is scored
+  against its own premium history (`option.quote.v1`); one whose premium history does not exist yet
+  waits as `awaiting a price source` until its holding window runs out, then settles as
+  `NO_PRICE_SOURCE` rather than staying open.
 - Dashboard -> proposals - the evaluator's one-knob learning suggestions appear as `candidate` rows
   and are inert until you approve them with `npm run harness:config -- --approve=<version>`.
 
@@ -132,11 +135,10 @@ any broker, by design.
 
 ## Known limitations at go-live (honest list)
 
-- **Option positions cannot be scored properly yet.** Greeks and the chain are read from Angel One,
-  but option quotes are not yet persisted as a price path, so the evaluator refuses to score an
-  option-premium plan on the underlying (`AWAITING_PRICE_SOURCE`) and settles it as
-  `NO_PRICE_SOURCE` once its holding window runs out. Spot/futures plans are scored normally.
-  Persisting option quotes is the next Angel One task.
+- **Option positions are scored from the first premium poll after publication.** Golden days of option
+  quote history do not exist; there is nothing to backfill, because the readings were never taken. A
+  position opened before Slice 8 has no premium path and settles as `NO_PRICE_SOURCE`, exactly as
+  before. Spot/futures plans are scored normally.
 - **A position with no price path is never settled.** The evaluator waits for evidence rather than
   inventing an exit.
 - **Public holidays are not modelled.** A weekday holiday simply yields no fresh evidence, so no

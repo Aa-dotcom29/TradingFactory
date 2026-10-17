@@ -16,12 +16,12 @@
 //
 // Three things W7 deliberately does not do:
 //
-//   * It does not score an option-premium plan against the underlying price. The plan's levels
-//     are premiums and the readings are spot, so the resulting number would be confident nonsense
-//     fed straight into the loss controls. Such a position is reported as awaiting a price source
-//     while its window is open, and settled with no verdict once the window elapses - so it neither
-//     invents a return nor stays open forever. Persisting option quotes is what would let one be
-//     scored properly.
+//   * It never scores an option-premium plan against the underlying price. The plan's levels are
+//     premiums and spot readings are not premiums, so such a pair is refused outright. Since
+//     Slice 8 W0 persists each held option's own premium series, so an option plan is scored
+//     against that; until a reading exists it is reported as awaiting a price source, and once its
+//     window elapses it settles with no verdict - so it neither invents a return nor stays open
+//     forever.
 //   * It does not trust the storage time of a quote. A quote is dated by the market timestamp it
 //     carries, so a Friday close re-stored on Monday cannot masquerade as fresh momentum.
 //   * It does not apply a config change. It may propose one, written as a `candidate` row in
@@ -33,13 +33,13 @@ const db = require('../db');
 const queue = require('../queue');
 const { TOPICS } = require('../topics');
 const { DEFAULT_RISK_CONFIG, resolveRiskConfig } = require('../risk');
-const { STATUS, RESULT, evaluateOutcome, scoreOutcomes, proposeConfigChange } = require('../outcome');
+const { STATUS, RESULT, evaluateOutcome, scoreOutcomes, proposeConfigChange, planKind, PRICE_SOURCE } = require('../outcome');
+const { contractKey, priceSourceFor } = require('../contract');
 
 const log = require('../logger').child({ module: 'w7' });
 
 const ENGINE_VERSION = 'evaluate-engine-1';
 const CONFIG_FAMILY = 'risk';
-const QUOTE_FEATURE_SET = 'quote.v1';
 const PROPOSAL_AUTHOR = 'w7-evaluator';
 const OUTCOME_RETENTION_DAYS = 90;
 
@@ -138,19 +138,51 @@ class EvaluateWorker {
   // happened to store it. The two differ by exactly the amount that would let a stale close
   // register as a fresh level breach, so the quote's own clock wins.
   //
-  // Its high and low are the *day's* range and are deliberately not passed on: a daily high is
-  // not a bar, and treating it as one would report the target as hit on the open.
+  // Which series to read depends on the plan. An option-premium plan is judged against that
+  // option's own premium history (`option.quote.v1`, keyed by the contract), everything else
+  // against the underlying quote history. A contract that cannot be identified yields an empty
+  // path, so the position is parked as awaiting a price source rather than silently scored against
+  // the wrong instrument.
+  //
+  // The chosen series' high and low are the *day's* range and are deliberately not passed on: a
+  // daily high is not a bar, and treating it as one would report the target as hit on the open.
   async loadPricePath(signal) {
     const sql = this.sql;
-    return sql`
+    const plan = (signal.snapshot && signal.snapshot.plan) || null;
+    const source = priceSourceFor(planKind(signal, plan));
+
+    if (source === PRICE_SOURCE.OPTION) {
+      const key = contractKey({
+        symbol: signal.symbol,
+        expiry: plan && plan.expiry,
+        strike: signal.strike,
+        optionType: signal.option_type,
+      });
+      if (!key) {
+        return { source, path: [], contractKey: null, reason: 'the option contract could not be identified' };
+      }
+      const path = await sql`
+        select coalesce((f.values ->> 'quoteTime')::timestamptz, f.as_of) as at,
+               (f.values ->> 'ltp') as price
+        from features f
+        where f.feature_set = ${source}
+          and f.symbol = ${key}
+          and f.as_of >= ${signal.published_at}
+        order by at asc
+      `;
+      return { source, path, contractKey: key };
+    }
+
+    const path = await sql`
       select coalesce((f.values ->> 'quoteTime')::timestamptz, f.as_of) as at,
              (f.values ->> 'ltp') as price
       from features f
-      where f.feature_set = ${QUOTE_FEATURE_SET}
+      where f.feature_set = ${source}
         and f.symbol = ${signal.symbol}
         and f.as_of >= ${signal.published_at}
       order by at asc
     `;
+    return { source, path };
   }
 
   async latestEventState(signalId) {
@@ -176,7 +208,7 @@ class EvaluateWorker {
     const payload = {
       engineVersion: ENGINE_VERSION,
       configVersion,
-      priceSource: QUOTE_FEATURE_SET,
+      priceSource: evaluation.priceSource || null,
       result: evaluation.result,
       unpriced: Boolean(evaluation.unpriced),
       ambiguous: evaluation.ambiguous,
@@ -215,7 +247,7 @@ class EvaluateWorker {
   }
 
   async evaluateSignal(signal, configVersion) {
-    const path = await this.loadPricePath(signal);
+    const loaded = await this.loadPricePath(signal);
     const holdingDays = holdingDaysFor(this.configCache?.config, signal.horizon);
     const evaluation = evaluateOutcome({
       signal: {
@@ -231,10 +263,17 @@ class EvaluateWorker {
         publishedAt: signal.published_at,
         snapshot: signal.snapshot,
       },
-      path,
+      path: loaded.path,
+      priceSource: loaded.source,
       holdingDays,
       now: Date.now(),
     });
+
+    // Keep the specific reason (an unidentifiable contract) visible instead of letting the generic
+    // "awaiting a price source" message hide the one fact a person would need to fix it.
+    if (loaded.reason && evaluation.reason) {
+      evaluation.reason = `${evaluation.reason} (${loaded.reason})`;
+    }
 
     if (evaluation.status !== STATUS.CLOSED) {
       return { status: evaluation.status, reason: evaluation.reason, signal: signal.id };

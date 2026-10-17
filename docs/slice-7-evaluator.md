@@ -70,11 +70,17 @@ Three rules are worth stating because they are where an evaluator usually lies t
 ## What it refuses to do
 
 **It will not score an option-premium plan against the underlying price.** An option plan's entry,
-target and stop are on the option *premium*; the only price history recorded is the underlying. The
-two are different instruments, so the comparison would produce a confident, meaningless number and
-feed it straight into the loss controls. Those positions are reported as `awaiting price source` and
-left open until option quotes are persisted. The plan label does not get the last word either: if a
-plan carries a strike it is treated as an option plan even if it calls itself `SPOT`.
+target and stop are on the option *premium*, and the underlying quote is not a premium. The two are
+different instruments, so the comparison would produce a confident, meaningless number and feed it
+straight into the loss controls. The check is enforced inside the pure evaluator, not just in the
+worker, so a caller that hands over the wrong series cannot slip one through.
+
+Since Slice 8 that refusal no longer means "never scored": W0 persists each held option's own premium
+history under `option.quote.v1`, keyed by the contract (`NIFTY|2026-10-19|23150|CE`), and W7 judges an
+option plan on that. A position with no premium readings yet is `awaiting price source` while its
+window is open, and settles as `NO_PRICE_SOURCE` once the window elapses. The plan label does not get
+the last word either: if a plan carries a strike it is treated as an option plan even if it calls
+itself `SPOT`.
 
 **It will not trust the storage time of a quote.** A price reading is dated by the market timestamp
 the quote carries (`values.quoteTime`), not by `features.as_of` - when we happened to store it. A
@@ -202,11 +208,13 @@ Totals: harness tests **152/152** (34 new), web tests **22/22** (2 new), selfche
    pnl once the horizon's holding window has run out - it settles the ledger without inventing a
    return, and the risk gate's loss streak skips it rather than reading it as a break. While the
    window is still open it simply shows as `open`.
-2. **Option positions close only when their window elapses.** By design, until option quotes are
-   persisted, an option-premium plan cannot be scored on the underlying. It shows as
-   `awaiting price source` while its window is open and settles as `NO_PRICE_SOURCE` once the window
-   runs out, so it holds no exposure slot forever. Persisting option quotes is what would let one be
-   scored properly.
+2. **An option position is only scored once its premium history exists.** Since Slice 8 W0 polls the
+   held contracts and persists each premium under `option.quote.v1`, so an option-premium plan is
+   judged on its own premium series. A position whose contract cannot be resolved, or which was
+   opened before the premium series began, has no readings and shows as `awaiting price source` while
+   its window is open, settling as `NO_PRICE_SOURCE` once the window runs out - so it holds no
+   exposure slot forever and never invents a return. The premium path starts at the first poll after
+   publication, and there is no option quote history for positions opened before this slice.
 3. **`bars_held` counts readings, not bars.** With a quote polled every few seconds, one reading is
    one observation. It is honest but coarse; `payload.heldMinutes` carries the real duration.
 4. **Excursion uses the readings, not intra-bar extremes.** The quote payload's `high`/`low` are the

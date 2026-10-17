@@ -58,6 +58,7 @@ class AngelClient {
     // Renamed from publicIp so it does not shadow the publicIp() method below.
     this.resolvedPublicIp = '';
     this.instruments = null;
+    this.instrumentsPromise = null;
     this.lastError = null;
     this.limiter = new RateLimiter(config.angel.maxPerSecond);
   }
@@ -129,11 +130,25 @@ class AngelClient {
 
   async ensureInstruments() {
     if (this.instruments) return this.instruments;
-    const response = await fetch(config.angel.scripMasterUrl, { signal: AbortSignal.timeout(25000) });
-    if (!response.ok) throw new Error(`Could not download instrument master (HTTP ${response.status})`);
-    this.instruments = await response.json();
-    log.info('instrument master loaded', { rows: this.instruments.length });
-    return this.instruments;
+    // Two quote paths (the underlying universe and the held option contracts) can ask for the
+    // master in the same cycle. Sharing the in-flight download keeps that to one request instead
+    // of two 20 MB downloads; a failure clears it so the next cycle retries.
+    if (!this.instrumentsPromise) {
+      this.instrumentsPromise = (async () => {
+        const response = await fetch(config.angel.scripMasterUrl, { signal: AbortSignal.timeout(25000) });
+        if (!response.ok) throw new Error(`Could not download instrument master (HTTP ${response.status})`);
+        const rows = await response.json();
+        log.info('instrument master loaded', { rows: rows.length });
+        this.instruments = rows;
+        return rows;
+      })();
+    }
+    try {
+      return await this.instrumentsPromise;
+    } catch (error) {
+      this.instrumentsPromise = null;
+      throw error;
+    }
   }
 
   resolveIndexTokens() {

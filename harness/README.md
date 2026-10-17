@@ -37,6 +37,7 @@ harness/
   src/sources/nse.js       cookie-primed OI spurts + option chain
   src/sources/angel-client.js  batched quotes + option greeks
   src/sources/angel-quote.js   pure Angel FULL-quote -> quote.v1 mapping
+  src/contract.js          pure option-contract identity + instrument matching
   src/workers/w0-ingest.js     ingestion worker
   src/workers/w8-supervisor.js health / queue / freshness watcher
   src/run.js               entrypoint (--once, --dry, --role=)

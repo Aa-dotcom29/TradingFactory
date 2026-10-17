@@ -13,11 +13,14 @@
 //   2. does login + TOTP succeed?
 //   3. does the instrument master download and resolve the indices?
 //   4. does a FULL quote return rows - with the exchange timestamp the bias meter ages on?
-//   5. (best effort) does the option-Greek endpoint answer for the nearest NIFTY expiry?
+//   5. (best effort) does an option premium come back for the at-the-money contract, which is what
+//      makes an option-premium position scorable?
+//   6. (best effort) does the option-Greek endpoint answer for the nearest NIFTY expiry?
 
 const config = require('../src/config');
 const { AngelClient } = require('../src/sources/angel-client');
 const { parseAngelTime } = require('../src/sources/angel-quote');
+const { matchOptionToken } = require('../src/contract');
 
 const REQUIRED = ['ANGEL_CLIENT_ID', 'ANGEL_API_KEY', 'ANGEL_PASSWORD', 'ANGEL_TOTP_SECRET'];
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
@@ -102,8 +105,10 @@ async function main() {
   }
   pass('index tokens', tokens.map((t) => `${t.name}=${t.token}`).join(' '));
 
+  const niftyToken = (tokens.find((t) => t.name === 'NIFTY 50') || {}).token || null;
+  let quotes = [];
   try {
-    const quotes = await client.quote('FULL', { NSE: tokens.map((t) => t.token) });
+    quotes = await client.quote('FULL', { NSE: tokens.map((t) => t.token) });
     if (!quotes.length) {
       fail('FULL quote', 'no rows returned');
       return 1;
@@ -123,6 +128,45 @@ async function main() {
   }
 
   const expiry = nearestExpiry(instruments);
+
+  // The option-premium path: this is what makes an option-premium position scorable rather than
+  // settled with no verdict. Resolve the at-the-money CE for the nearest expiry through the same
+  // matcher W0 uses, then quote it on the derivatives exchange.
+  const niftyLtp = Number((quotes.find((q) => String(q.symbolToken) === String(niftyToken)) || {}).ltp) || null;
+  if (!expiry) {
+    info('option quote', 'no current NIFTY OPTIDX expiry in the master; skipped');
+  } else if (!niftyLtp) {
+    info('option quote', 'no NIFTY spot price to anchor an at-the-money strike');
+  } else {
+    const series = instruments.filter((r) => String(r.exch_seg).toUpperCase() === 'NFO'
+      && String(r.instrumenttype).toUpperCase() === 'OPTIDX'
+      && String(r.name).toUpperCase() === 'NIFTY'
+      && expiryIso(r.expiry) === expiry
+      && String(r.symbol).toUpperCase().endsWith('CE'));
+    const atm = series.reduce((best, r) => (
+      best === null || Math.abs(Number(r.strike) / 100 - niftyLtp) < Math.abs(Number(best.strike) / 100 - niftyLtp) ? r : best
+    ), null);
+    const match = atm
+      ? matchOptionToken(instruments, { symbol: 'NIFTY 50', expiry, strike: Number(atm.strike) / 100, optionType: 'CE' })
+      : null;
+    if (!match) {
+      info('option quote', `no at-the-money CE contract resolved for ${expiry}`);
+    } else {
+      try {
+        const rows = await client.quote('FULL', { NFO: [match.token] });
+        if (!rows.length) {
+          info('option quote', `no premium returned for ${match.tradingSymbol}`);
+        } else {
+          const q = rows[0];
+          const when = parseAngelTime(q.exchFeedTime || q.exchTradeTime);
+          pass('option quote', `${match.tradingSymbol} ltp=${q.ltp} openInterest=${q.opnInterest} -> ${when}`);
+        }
+      } catch (error) {
+        info('option quote', `unavailable for ${match.tradingSymbol}: ${error.message}`);
+      }
+    }
+  }
+
   if (!expiry) {
     info('option greeks', 'no current NIFTY OPTIDX expiry in the master; skipped');
   } else {

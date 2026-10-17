@@ -446,6 +446,32 @@ create unique index if not exists outcomes_signal_unique_idx on outcomes (signal
 create index if not exists outcomes_evaluated_idx on outcomes (evaluated_at desc);
 create index if not exists outcomes_horizon_result_idx on outcomes (horizon, result);
 
+-- ---------------------------------------------------------------------------
+-- Slice 8 - option-premium persistence
+--
+-- An option-premium plan quotes its entry, target and stop on the option, so it can only be
+-- scored against that option's own premium history - never against the underlying spot. W0 now
+-- polls exactly the contracts the harness is holding and writes each premium as a feature row
+-- under `option.quote.v1`, keyed by the contract identity ('NIFTY|2026-10-19|23150|CE') rather
+-- than by the underlying symbol. Nothing is enqueued for these rows: the bias meter and the
+-- signal builder read `quote.v1`, and an option contract must never be treated as a tradeable
+-- symbol in the universe.
+--
+-- The series is self-describing (`values` carries the underlying, expiry, strike, option type and
+-- token), so a stored premium can be traced back to the contract it belongs to without consulting
+-- the instrument master, which changes daily.
+--
+-- `market_snapshots.kind` gains OPTION_QUOTE so the raw archive distinguishes a premium from a
+-- spot quote at a glance.
+-- ---------------------------------------------------------------------------
+alter table market_snapshots drop constraint if exists market_snapshots_kind_check;
+alter table market_snapshots add constraint market_snapshots_kind_check
+  check (kind in ('QUOTE', 'GREEK', 'CHAIN', 'OPTION_QUOTE'));
+
+-- The evaluator reads one symbol's series since publication; this is the index that keeps that
+-- read cheap for both the underlying and the option series once the partitions have months of data.
+create index if not exists features_symbol_asof_idx on features (feature_set, symbol, as_of desc);
+
 insert into schema_migrations (version) values ('0001_harness_backbone')
   on conflict (version) do nothing;
 insert into schema_migrations (version) values ('0002_slice1_auth')
@@ -459,6 +485,8 @@ insert into schema_migrations (version) values ('0005_slice5_risk_publish')
 insert into schema_migrations (version) values ('0006_slice5_quote_fallback')
   on conflict (version) do nothing;
 insert into schema_migrations (version) values ('0007_slice7_evaluate')
+  on conflict (version) do nothing;
+insert into schema_migrations (version) values ('0008_slice8_option_quotes')
   on conflict (version) do nothing;
 
 commit;

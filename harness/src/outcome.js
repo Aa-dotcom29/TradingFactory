@@ -11,6 +11,8 @@
 // fourteen gates reported SKIPPED every single time - not because they were unimplemented, but
 // because there had never been a closed trade to learn from.
 
+const { PRICE_SOURCE } = require('./contract');
+
 const RESULT = {
   TARGET: 'TARGET',
   STOP: 'STOP',
@@ -80,16 +82,12 @@ function normalisePath(path) {
 // A SPOT (or futures) plan quotes its entry, target and stop on the underlying, and the price
 // history we hold is underlying quotes - so the two are on the same instrument and comparable.
 //
-// An option plan quotes those levels on the option *premium*. Judging a premium against an
-// underlying price would produce a confident, meaningless number and then feed it to the loss
-// controls, so option plans are reported as awaiting a price source until option quotes are
-// persisted (W0 can write them as market_snapshots kind='QUOTE'). Refusing to score is the
-// honest answer; inventing one would poison everything downstream.
-// An option-premium plan's levels are quoted on the option, and the price history we hold is the
-// underlying - so the two are not comparable. While its window is open it is reported as awaiting
-// a price source; once the window elapses it is settled with no verdict (`NO_PRICE_SOURCE`) rather
-// than left open forever. Refusing to score is the honest answer; inventing a return would poison
-// everything downstream.
+// An option plan quotes those levels on the option *premium*. Since Slice 8 the harness persists an
+// option's own premium series (W0, `option.quote.v1`), so such a plan is scored against that series
+// and not against spot. Until a reading exists it is reported as awaiting a price source, and once
+// its window elapses it settles with no verdict rather than staying open forever. Judging a premium
+// against an underlying price would produce a confident, meaningless number and then feed it to the
+// loss controls, so a mismatched pair is refused outright.
 function planKind(signal, plan) {
   const instrument = String((signal && signal.instrument) || '').toLowerCase();
   const explicit = String((plan && plan.kind) || '').toUpperCase();
@@ -124,7 +122,15 @@ function evaluateOutcome(options = {}) {
   const target = num(signal.target);
   const stop = num(signal.stop);
 
-  const base = { horizon, symbol: signal.symbol || null, direction, entry };
+  // What is this plan priced on, and what series was the caller offering? Both are settled before
+  // any early return so every verdict can say which instrument it judged and against which series.
+  //
+  // The default is the ordinary underlying series, not the series the plan would ideally have: a
+  // caller who forgets to say which series it loaded must land on the refusal, never on a score.
+  const kind = planKind(signal, plan);
+  const priceSource = options.priceSource || PRICE_SOURCE.UNDERLYING;
+
+  const base = { horizon, symbol: signal.symbol || null, direction, entry, kind, priceSource };
 
   if (!isLong(direction) && direction !== 'BEARISH') {
     return { status: STATUS.UNEVALUABLE, ...base, reason: `direction ${direction || '(none)'} is not tradable` };
@@ -147,23 +153,36 @@ function evaluateOutcome(options = {}) {
   }
   const windowMs = windowDays * 86400000;
 
-  // A plan is priced on the same instrument its levels are quoted on. An option-premium plan is
-  // not, because we hold underlying quotes and not option quotes, so its levels can never be
-  // judged honestly against this path.
-  const underlyingPriced = planKind(signal, plan) !== 'OPTION';
-  const readings = underlyingPriced
-    ? normalisePath(options.path).filter((reading) => reading.at >= publishedAt)
-    : [];
+  // A plan and its price series must describe the same instrument: an option-premium plan's levels
+  // are premiums, an underlying plan's are spot. The check is enforced here, in the pure function,
+  // so a caller that hands over the wrong series cannot produce a confident, wrong number and feed
+  // it to the loss controls. The refusal does not depend on the worker's wiring being correct.
+  const optionPlan = kind === 'OPTION';
+  const wrongSeries = optionPlan
+    ? priceSource !== PRICE_SOURCE.OPTION
+    : priceSource !== PRICE_SOURCE.UNDERLYING;
 
-  // Nothing to walk: either the plan can never be priced on this instrument, or no reading ever
+  // A spot plan handed a premium series is a caller bug, not a position we are waiting on, so it
+  // is reported as unevaluable rather than parked in a waiting state it would never leave.
+  if (wrongSeries && !optionPlan) {
+    return {
+      status: STATUS.UNEVALUABLE,
+      ...base,
+      reason: 'an underlying plan was given an option-premium price series',
+    };
+  }
+
+  const readings = wrongSeries ? [] : normalisePath(options.path).filter((reading) => reading.at >= publishedAt);
+
+  // Nothing to walk: either the plan cannot be priced on the series we hold, or no reading ever
   // arrived. While the holding window is still open that is a position we are waiting on - OPEN for
   // an underpriced plan, AWAITING_PRICE_SOURCE for one we cannot price at all. Once the window has
   // elapsed the position is settled with no verdict and no pnl, so a plan that could never be
   // priced stops accumulating as a permanent open position. It never invents an exit or a return.
   if (!readings.length) {
-    const reason = underlyingPriced
-      ? 'no price readings since publication'
-      : 'option-premium plan: needs option quote history, not the underlying price';
+    const reason = optionPlan
+      ? 'option-premium plan: needs option quote history, not the underlying price'
+      : 'no price readings since publication';
     if (now >= publishedAt + windowMs) {
       return {
         status: STATUS.CLOSED,
@@ -185,7 +204,7 @@ function evaluateOutcome(options = {}) {
       };
     }
     return {
-      status: underlyingPriced ? STATUS.OPEN : STATUS.AWAITING_PRICE_SOURCE,
+      status: optionPlan ? STATUS.AWAITING_PRICE_SOURCE : STATUS.OPEN,
       ...base,
       reason,
       readings: 0,
@@ -480,5 +499,6 @@ module.exports = {
   proposeConfigChange,
   planKind,
   movePct,
+  PRICE_SOURCE,
   DEFAULT_PROPOSAL_RULES,
 };

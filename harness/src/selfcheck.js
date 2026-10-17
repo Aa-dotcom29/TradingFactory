@@ -26,7 +26,8 @@ const { SignalWorker } = require('./workers/w4-signals');
 const { RiskWorker } = require('./workers/w5-risk');
 const { PublishWorker } = require('./workers/w6-publish');
 const { EvaluateWorker, holdingDaysFor } = require('./workers/w7-evaluate');
-const { STATUS, evaluateOutcome, scoreOutcomes, proposeConfigChange } = require('./outcome');
+const { STATUS, evaluateOutcome, scoreOutcomes, proposeConfigChange, PRICE_SOURCE } = require('./outcome');
+const { contractKey, matchOptionToken } = require('./contract');
 const rss = require('./sources/rss');
 const yahoo = require('./sources/yahoo');
 
@@ -291,6 +292,52 @@ async function pureFunctionChecks() {
     'angel optionGreek expiry is sent as DDMMMYYYY',
     toAngelExpiry('2026-10-19') === '19OCT2026' && toAngelExpiry('25JAN2024') === '25JAN2024',
     `iso=${toAngelExpiry('2026-10-19')} compact=${toAngelExpiry('25JAN2024')}`,
+  );
+
+  // Slice 8: the option identity has to be the same string on both sides (W0 writes the premium
+  // series under it, W7 reads it back), and the match has to undo the broker's x100 strike.
+  const optionTarget = { symbol: 'NIFTY 50', expiry: '19-Oct-2026', strike: 23150, optionType: 'CE' };
+  const optionKey = contractKey(optionTarget);
+  const optionMatch = matchOptionToken([{
+    token: '47169', symbol: 'NIFTY19OCT2623150CE', name: 'NIFTY', expiry: '19OCT2026',
+    strike: '2315000.000000', exch_seg: 'NFO', instrumenttype: 'OPTIDX', lotsize: '65',
+  }], optionTarget);
+  record(
+    'option contract identity round-trips from the universe symbol to an NFO token',
+    optionKey === 'NIFTY|2026-10-19|23150|CE' && Boolean(optionMatch) && optionMatch.token === '47169',
+    `key=${optionKey} token=${optionMatch ? optionMatch.token : 'none'}`,
+  );
+
+  // The premium series only scores the plan if the two refer to the same instrument, and the
+  // refusal survives a caller handing over the wrong one.
+  const optionScored = evaluateOutcome({
+    signal: {
+      horizon: 'SWING', symbol: 'NIFTY 50', direction: 'BULLISH', instrument: 'NIFTY 19OCT2026 23150 CE',
+      strike: 23150, option_type: 'CE', entry: 100, target: 110, stop: 95,
+      publishedAt: '2026-10-14T05:00:00Z', snapshot: { plan: { kind: 'OPTION', expiry: '19-Oct-2026' } },
+    },
+    path: [{ at: '2026-10-14T05:10:00Z', price: 112 }],
+    priceSource: PRICE_SOURCE.OPTION,
+    holdingDays: 30,
+    now: Date.parse('2026-10-14T06:00:00Z'),
+  });
+  const optionRefused = evaluateOutcome({
+    signal: {
+      horizon: 'SWING', symbol: 'NIFTY 50', direction: 'BULLISH', instrument: 'NIFTY 19OCT2026 23150 CE',
+      strike: 23150, option_type: 'CE', entry: 100, target: 110, stop: 95,
+      publishedAt: '2026-10-14T05:00:00Z', snapshot: { plan: { kind: 'OPTION', expiry: '19-Oct-2026' } },
+    },
+    path: [{ at: '2026-10-14T05:10:00Z', price: 112 }],
+    priceSource: PRICE_SOURCE.UNDERLYING,
+    holdingDays: 30,
+    now: Date.parse('2026-10-14T06:00:00Z'),
+  });
+  record(
+    'slice 8 an option plan is scored on its premium series and refused the spot one',
+    optionScored.status === STATUS.CLOSED && optionScored.result === 'TARGET'
+      && optionScored.priceSource === PRICE_SOURCE.OPTION
+      && optionRefused.status === STATUS.AWAITING_PRICE_SOURCE,
+    `scored=${optionScored.status}/${optionScored.result} refused=${optionRefused.status}`,
   );
 
   // Publishing is switchable per horizon, which is what allows Intraday to be turned on last.

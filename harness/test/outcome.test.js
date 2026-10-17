@@ -11,6 +11,7 @@ const {
   proposeConfigChange,
   planKind,
   movePct,
+  PRICE_SOURCE,
 } = require('../src/outcome');
 
 const T0 = Date.parse('2026-10-14T05:00:00Z'); // Wednesday 10:30 IST
@@ -260,6 +261,40 @@ test('an option-premium plan is settled once its window elapses, not left open f
   assert.equal(result.result, RESULT.NO_PRICE_SOURCE);
   assert.equal(result.pnlPct, null);
   assert.equal(result.readings, 0);
+});
+
+// Slice 8: option premiums are persisted, so an option plan is scored - against the premium series
+// it actually trades on, which is the whole point of keeping the two series apart.
+test('an option-premium plan is scored against its own premium series', () => {
+  const result = evaluate(
+    { instrument: 'OPTION', strike: 22000, option_type: 'CE' },
+    [{ at: at(5), price: 104 }, { at: at(20), price: 118 }, { at: at(30), price: 121 }],
+    { priceSource: PRICE_SOURCE.OPTION },
+  );
+  assert.equal(result.status, STATUS.CLOSED);
+  assert.equal(result.result, RESULT.TARGET);
+  // The plan levels are premiums (target 110), and so are the readings.
+  assert.equal(result.exit, 110);
+  assert.equal(result.pnlPct, 10);
+  assert.equal(result.kind, 'OPTION');
+  assert.equal(result.priceSource, PRICE_SOURCE.OPTION);
+  assert.equal(result.readings, 2); // the two readings up to the exit
+});
+
+test('an option-premium plan is still refused a spot series even when it carries readings', () => {
+  const spotPath = [{ at: at(5), price: 111 }];
+  assert.equal(evaluate({ instrument: 'OPTION', strike: 22000, option_type: 'CE' }, spotPath).status, STATUS.AWAITING_PRICE_SOURCE);
+  assert.equal(
+    evaluate({ instrument: 'OPTION', strike: 22000, option_type: 'CE' }, spotPath, { priceSource: PRICE_SOURCE.UNDERLYING }).status,
+    STATUS.AWAITING_PRICE_SOURCE,
+  );
+});
+
+test('an underlying plan offered an option-premium series is unevaluable, never scored on it', () => {
+  const result = evaluate({}, [{ at: at(5), price: 111 }], { priceSource: PRICE_SOURCE.OPTION });
+  assert.equal(result.status, STATUS.UNEVALUABLE);
+  assert.match(result.reason, /option-premium price series/);
+  assert.equal(result.kind, 'UNDERLYING');
 });
 
 test('planKind reads the explicit kind first, then the strike, then the instrument name', () => {

@@ -190,3 +190,7 @@ Intraday last.
 Slice 7 is the evaluator (W7): close positions so the exposure ledger and the loss controls are
 fed real outcomes, score outcomes, and produce candidate configs for human approval. The gate's
 loss controls and the `holdingDays` caveat above both resolve there.
+
+Slice 8 is option-premium persistence: W0 polls the contracts the harness holds and stores each
+premium under its own contract key, so an option-premium plan can be scored on the instrument it
+actually trades instead of being refused. See [`slice-8-option-quotes.md`](./slice-8-option-quotes.md).

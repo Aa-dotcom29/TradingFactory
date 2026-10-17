@@ -33,9 +33,10 @@ tells you whether it worked, and it never prints a secret.
    npm run harness:angel-check
    ```
    It checks, in order: values present -> login + TOTP -> instrument master -> a FULL quote (and
-   whether the exchange timestamp the bias meter ages on is present) -> option greeks. Each step
-   prints PASS/FAIL, so a failure names its cause. The greeks step is best effort: Angel often
-   answers "No Data Available" outside market hours, which is reported as a note, not a failure.
+   whether the exchange timestamp the bias meter ages on is present) -> an option premium for the
+   at-the-money contract -> option greeks. Each step prints PASS/FAIL, so a failure names its cause.
+   The option-quote and greeks steps are best effort: Angel often answers "No Data Available" outside
+   market hours, which is reported as a note, not a failure.
 6. **Flip the feed on.** With the check passing, run the pipeline normally. W0 will now prefer
    Angel One; `sources_health` shows `angel HEALTHY ... quotes` in place of the Yahoo row.
 
@@ -44,8 +45,9 @@ tells you whether it worked, and it never prints a secret.
 - **Live quotes** tagged `angel-live` with the exchange's own `exchFeedTime`, so the bias meter's
   price component ages a real-time read exactly (see `evidence-ageing.md`).
 - **The option chain and Greeks** (`optionGreek`), which Yahoo cannot provide at all.
-- The basis for **persisting option quotes**, which is what the evaluator (W7) needs before an
-  option-premium position can be scored properly. That is not built yet - see the limitation below.
+- **Option-premium history** for held positions: W0 resolves each open option plan to its NFO
+  contract and stores that premium under `option.quote.v1`, so the evaluator (W7) can score an
+  option-premium position on the instrument it actually trades. See `docs/slice-8-option-quotes.md`.
 
 ## Rate limits to keep in mind
 
@@ -67,6 +69,7 @@ limit while polling the index universe.
 | quote rows but no timestamp | Angel omitted `exchFeedTime`; the meter falls back to capture time |
 | greeks note "No Data Available" | usually just out of hours; Angel serves greeks around market hours |
 | greeks FAIL "Invalid expiry date" | the expiry was sent as ISO; `optionGreek` wants `DDMMMYYYY` (the client converts) |
+| option quote note "no at-the-money CE contract resolved" | the master had no matching contract for that expiry; re-run after the master refreshes |
 
 Note that `optionGreek` is the one Angel route that does **not** take an ISO date: it wants
 `25JAN2024`-style `DDMMMYYYY`. The instrument master hands the harness ISO, so `optionGreeks` is
@@ -77,12 +80,14 @@ straddles midnight simply logs in again.
 
 ## Honest limitations
 
-- **Option positions cannot be scored yet.** Angel exposes the option chain and Greeks, but the
-  harness does not yet persist option quotes as price readings, so W7 refuses to score an
-  option-premium plan on the underlying (`AWAITING_PRICE_SOURCE`). Such a position now settles with
-  no verdict (`NO_PRICE_SOURCE`) once its holding window runs out, rather than staying open forever.
-  Persisting option quotes is the next Angel One task, and it is deliberately not being written
-  blind - it should be built against a live account so the option response shape is verified rather
-  than assumed.
+- **Option premiums are polled only for positions the harness actually holds.** W0 resolves each open
+  option position to its NFO contract and stores that premium under `option.quote.v1`, keyed by the
+  contract. There is no full-chain feed, by design: polling the whole chain would be an unbounded cost
+  for data nothing reads. The consequence is that an option position is scored only from the first
+  poll after it is published, and a contract that cannot be resolved against the daily master is
+  reported as unresolved rather than priced against the wrong instrument.
+- **The scrip master stores option strikes multiplied by 100** (`2030000` for the 20300 strike) and
+  expiries as `DDMMMYYYY`. Both are undone in `harness/src/contract.js`, which is the single place the
+  broker's conventions are translated - verified against a live master, not assumed.
 - **The static IP is a real constraint.** A residential connection without a static IP will work
   intermittently and then break when the IP rotates. The 24/7 host is the fix.

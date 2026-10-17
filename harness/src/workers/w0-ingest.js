@@ -15,10 +15,17 @@ const nse = require('../sources/nse');
 const yahoo = require('../sources/yahoo');
 const { AngelClient, configured: angelConfigured } = require('../sources/angel-client');
 const { toQuotePayload } = require('../sources/angel-quote');
+const { contractKey, matchOptionToken, PRICE_SOURCE } = require('../contract');
+const { isMarketOpen } = require('../session');
 const { normalizeUniverseSymbol } = require('../bias');
 const { dedupeHash } = require('../normalize');
 
 const log = require('../logger').child({ module: 'w0' });
+
+// The feature set that holds option-premium series, and the batch size one broker quote call
+// accepts. Both are named once so the writer (this worker) and the reader (W7) cannot drift.
+const OPTION_QUOTE_SET = PRICE_SOURCE.OPTION;
+const OPTION_BATCH = 50;
 
 // The bounded wire form of an OI-spurt row, shared by the flow snapshot message so W2 gets a
 // stable shape regardless of how NSE labels its fields.
@@ -202,6 +209,126 @@ class IngestWorker {
     }
   }
 
+  // Option-premium positions need a series of their own: a plan's levels are premiums, and the
+  // underlying quote is not one. W0 polls exactly the contracts the harness is currently holding -
+  // bounded, and precisely what W7 needs - and persists each premium under `option.quote.v1`,
+  // keyed by the contract identity rather than by the underlying symbol.
+  //
+  // Nothing is enqueued for these rows. The bias meter and the signal builder read `quote.v1`, and
+  // an option contract must never be treated as a tradeable symbol in the universe, so the premium
+  // series is written and read, never fanned out.
+  async loadOpenOptionSignals() {
+    const sql = this.sql;
+    return sql`
+      select s.id, s.symbol, s.strike, s.option_type, s.snapshot
+      from signals s
+      left join outcomes o on o.signal_id = s.id
+      where o.id is null
+        and s.strike is not null
+        and s.option_type in ('CE', 'PE')
+      order by s.published_at asc
+      limit 200
+    `;
+  }
+
+  async persistOptionQuotes(rows, { capturedAt, provider, provenance }) {
+    const sql = this.sql;
+    if (!sql || !rows.length) return 0;
+    await sql`
+      insert into market_snapshots ${sql(rows.map((r) => ({
+        captured_at: capturedAt, provider, symbol: r.symbol, kind: 'OPTION_QUOTE', payload: r.payload,
+      })))}
+    `;
+    await sql`
+      insert into features ${sql(rows.map((r) => ({
+        as_of: capturedAt, symbol: r.symbol, feature_set: OPTION_QUOTE_SET, horizon: null,
+        values: r.payload, provenance,
+      })))}
+    `;
+    return rows.length;
+  }
+
+  // Resolve each held option position to its NFO contract, quote them in one batched call (or a
+  // few), and persist the premiums. A contract that cannot be resolved is counted, not guessed at -
+  // a wrong contract would be worse than a missing one.
+  async runOptionQuotes() {
+    if (config.dryRun) {
+      log.info('option quote cycle (dry run)');
+      return { contracts: 0 };
+    }
+    if (!angelConfigured()) return { contracts: 0, skipped: 'angel-not-configured' };
+    if (!this.sql) return { contracts: 0, skipped: 'no-database' };
+    // A premium is only meaningful while the exchange is trading; out of hours the broker returns a
+    // stale stamp and the row adds nothing W7 can use.
+    if (!isMarketOpen()) return { contracts: 0, skipped: 'market-closed' };
+
+    try {
+      await this.ensureTokens();
+      const open = await this.loadOpenOptionSignals();
+      if (!open.length) return { contracts: 0, skipped: 'no-open-option-positions' };
+
+      const wanted = new Map();
+      const unresolved = [];
+      for (const row of open) {
+        const plan = (row.snapshot && row.snapshot.plan) || {};
+        const target = {
+          symbol: row.symbol, expiry: plan.expiry, strike: row.strike, optionType: row.option_type,
+        };
+        const key = contractKey(target);
+        const match = key ? matchOptionToken(this.angel.instruments, target) : null;
+        if (!match) {
+          unresolved.push(`${row.symbol} ${row.option_type || ''}`.trim());
+          continue;
+        }
+        if (!wanted.has(match.token)) wanted.set(match.token, { key, match });
+      }
+
+      if (!wanted.size) {
+        await this.markSource('angel-options', 'WARNING',
+          `${unresolved.length} open option position(s) could not be resolved to a contract`);
+        return { contracts: 0, unresolved: unresolved.length };
+      }
+
+      const tokens = [...wanted.keys()];
+      const quotes = [];
+      for (let i = 0; i < tokens.length; i += OPTION_BATCH) {
+        quotes.push(...await this.angel.quote('FULL', { NFO: tokens.slice(i, i + OPTION_BATCH) }));
+      }
+
+      const byToken = new Map(quotes.map((q) => [String(q.symbolToken), q]));
+      const capturedAt = new Date().toISOString();
+      const rows = [];
+      for (const [token, info] of wanted) {
+        const quote = byToken.get(token);
+        if (!quote) continue;
+        rows.push({
+          symbol: info.key,
+          payload: {
+            ...toQuotePayload(quote),
+            underlying: info.match.name,
+            expiry: info.match.expiry,
+            strike: info.match.strike,
+            optionType: info.match.optionType,
+            token,
+            tradingSymbol: info.match.tradingSymbol,
+            lotSize: info.match.lotSize,
+          },
+        });
+      }
+
+      const written = await this.persistOptionQuotes(rows, {
+        capturedAt, provider: 'Angel One SmartAPI', provenance: 'angel-live',
+      });
+      await this.markSource('angel-options', written ? 'HEALTHY' : 'WARNING',
+        `${written} contract(s) quoted of ${wanted.size} held, ${unresolved.length} unresolved`);
+      return { contracts: written, held: wanted.size, unresolved: unresolved.length, provenance: 'angel-live' };
+    } catch (error) {
+      await this.markSource('angel-options', 'ERROR', error.message);
+      log.warn('option quote cycle failed', { error: error.message });
+      return { contracts: 0, error: error.message };
+    }
+  }
+
   async runFlow() {
     if (config.dryRun) {
       log.info('flow cycle (dry run)', { source: 'NSE OI spurts' });
@@ -318,10 +445,12 @@ class IngestWorker {
 
   async runAll() {
     const startedAt = new Date().toISOString();
-    const [market, flow, news] = await Promise.all([this.runMarket(), this.runFlow(), this.runNews()]);
-    const ok = !market.error && !flow.error && !news.error;
-    await this.recordRun({ startedAt, ok, market, flow, news });
-    return { market, flow, news, ok };
+    const [market, flow, news, options] = await Promise.all([
+      this.runMarket(), this.runFlow(), this.runNews(), this.runOptionQuotes(),
+    ]);
+    const ok = !market.error && !flow.error && !news.error && !options.error;
+    await this.recordRun({ startedAt, ok, market, flow, news, options });
+    return { market, flow, news, options, ok };
   }
 }
 
