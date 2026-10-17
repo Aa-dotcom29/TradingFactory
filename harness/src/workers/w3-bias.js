@@ -185,6 +185,8 @@ class BiasWorker {
           now,
           marketOpen: session.open,
           quoteAsOf: quoteSet.asOf,
+          flowAsOf: flowSet.asOf,
+          newsAsOf: newsSet.asOf,
         })) {
           // A verdict with no evidence at all is not a verdict; skip rather than publish a
           // NEUTRAL that only means "we know nothing about this symbol".

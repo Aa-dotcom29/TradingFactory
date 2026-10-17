@@ -284,6 +284,30 @@ async function pureFunctionChecks() {
     `aged=${agedQuote.confidence} closed=${shutQuote.confidence}`,
   );
 
+  const T_SHUT = Date.parse('2026-10-17T12:00:00Z'); // Saturday, NSE shut
+  const agedFlow = flowSignal(
+    { longBuildup: 10, shortBuildup: 1, shortCovering: 1, longUnwinding: 0, ceOiChange: 100, peOiChange: 200, optionCount: 12 },
+    biasConfig,
+    { now: T_SHUT, asOf: new Date(T_SHUT - 20 * 3600000).toISOString(), marketOpen: false },
+  );
+  const agedNews = newsSignal(
+    { pressure: 0.5, itemCount: 6, maxSeverity: 'MEDIUM', netSentiment: 0.5, latestAt: new Date(T_SHUT - 40 * 3600000).toISOString() },
+    biasConfig,
+    { now: T_SHUT, asOf: T_SHUT },
+  );
+  const freshNews = newsSignal(
+    { pressure: 0.5, itemCount: 6, maxSeverity: 'MEDIUM', netSentiment: 0.5, latestAt: new Date(T_SHUT - 20 * 60000).toISOString() },
+    biasConfig,
+    { now: T_SHUT, asOf: T_SHUT },
+  );
+  record(
+    'bias flow and news components age and honour the session',
+    agedFlow.confidence <= biasConfig.flow.closedSessionConfidence
+      && agedNews.confidence < freshNews.confidence
+      && freshNews.confidence === 1,
+    `flow(closed)=${agedFlow.confidence} news(old)=${agedNews.confidence} news(fresh)=${freshNews.confidence}`,
+  );
+
   // --- Slice 7: the evaluator -------------------------------------------------------------
   const T7 = Date.parse('2026-10-14T05:00:00Z');
   const t7 = (minutes) => new Date(T7 + minutes * 60000).toISOString();

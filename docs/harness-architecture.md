@@ -234,15 +234,26 @@ the *origin* of every number explicit.
 - **Nothing is invented.** A symbol Yahoo does not answer for produces a per-symbol error, never a
   fabricated price; the batch keeps going and the failures are counted in `sources_health`.
 
-**Quote ageing (fixed).** A quote carries its own exchange timestamp (`values.quoteTime`) and a
-capture time (`features.as_of`). The `price` component now dates each read from `quoteTime`
-(falling back to `as_of` when a feed omits it) and cuts confidence as the read ages, reaching a
-floor at `maxAgeMinutes`. Outside the NSE session it goes further: the most recent close is a
-settled prior, not current momentum, so the component is capped at `closedSessionConfidence`
-(0.2) and its detail records `market closed: last close is not live`. It still votes its
-direction, but at a confidence that cannot carry a call by itself. `freshMinutes` is set to the
-Yahoo fallback's known delay so a normal delayed read is not punished. The session clock is shared
-with the risk gate via `harness/src/session.js`, so both stages agree on when the market is open.
+**Evidence ageing.** Every input that can go stale is dated and discounted, so a verdict is never
+carried by numbers from a previous session presented as current:
+
+- **price** dates each read from its exchange timestamp (`values.quoteTime`), falling back to
+  `features.as_of` for feeds that omit one, and cuts confidence as the read ages. Outside the NSE
+  session the most recent close is a settled prior, so the component is capped at
+  `closedSessionConfidence` (0.2) and its detail records `market closed: last close is not live`.
+- **flow** dates each snapshot from the feature `as_of` and is treated the same way: OI spurts are
+  intraday-session data, so outside the session the last build-up is a settled prior and the
+  component is capped at `closedSessionConfidence`.
+- **news** ages from the newest headline on the entity (`values.latestAt`), not from when it was
+  captured, and is deliberately *not* session-capped: an announcement made after the close is still
+  news in the morning. Its fade window (2h -> 48h) matches the news aggregation window.
+
+Each component keeps its score - the direction of the last read is still information - and reports
+its reduced confidence and age in `detail`. A confidence move is itself a material change
+(`materialChange.confidenceDelta`), so aged evidence reaches `bias_verdicts` and every stage
+downstream instead of a stale row standing in for it. `freshMinutes` is set to the Yahoo fallback's
+known delay so a normal delayed read is not punished. The session clock is shared with the risk gate
+via `harness/src/session.js`, so both stages agree on when the market is open.
 
 ## Optional LLM
 

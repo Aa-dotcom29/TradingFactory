@@ -136,6 +136,48 @@ test('priceSignal stops calling a closed-market close live', () => {
   assert.ok(undated.confidence <= config.price.closedSessionConfidence, `confidence=${undated.confidence}`);
 });
 
+test('newsSignal ages from the newest headline and is not capped by the session', () => {
+  const now = Date.parse('2026-10-17T12:00:00Z'); // Saturday, NSE shut
+  const recent = newsSignal(
+    { ...NEWS, latestAt: new Date(now - 30 * 60000).toISOString() },
+    config,
+    { now, asOf: now, marketOpen: false },
+  );
+  const old = newsSignal(
+    { ...NEWS, latestAt: new Date(now - 40 * 3600000).toISOString() },
+    config,
+    { now, asOf: now, marketOpen: false },
+  );
+
+  // A headline made after the close is still news in the morning: unlike price or flow, it is not
+  // capped just because the exchange is shut. Only its own age discounts it.
+  assert.equal(recent.confidence, 1);
+  assert.ok(old.confidence < recent.confidence, `recent=${recent.confidence} old=${old.confidence}`);
+  assert.ok(old.confidence >= config.news.staleConfidenceFloor, `confidence=${old.confidence}`);
+  assert.ok(old.detail.includes('h old'));
+});
+
+test('flowSignal ages its snapshot and is capped outside the session', () => {
+  const now = Date.parse('2026-10-14T04:00:00Z'); // Wednesday 09:30 IST
+  const fresh = flowSignal(BULL_FLOW, config, {
+    now, asOf: new Date(now - 2 * 60000).toISOString(), marketOpen: true,
+  });
+  const stale = flowSignal(BULL_FLOW, config, {
+    now, asOf: new Date(now - 90 * 60000).toISOString(), marketOpen: true,
+  });
+  assert.equal(fresh.confidence, 1);
+  assert.ok(stale.confidence < fresh.confidence, `fresh=${fresh.confidence} stale=${stale.confidence}`);
+  assert.ok(stale.detail.includes('old'));
+
+  const shutNow = Date.parse('2026-10-17T12:00:00Z'); // Saturday
+  const shut = flowSignal(BULL_FLOW, config, {
+    now: shutNow, asOf: new Date(shutNow - 20 * 3600000).toISOString(), marketOpen: false,
+  });
+  assert.ok(shut.confidence <= config.flow.closedSessionConfidence, `confidence=${shut.confidence}`);
+  assert.ok(shut.confidence > 0);
+  assert.ok(shut.detail.includes('market closed'));
+});
+
 test('verdictsForSymbol will not raise an intraday call from a closed-market close alone', () => {
   const now = Date.parse('2026-10-17T12:00:00Z'); // Saturday
   const features = {
@@ -242,4 +284,10 @@ test('isMaterialChange only fires on a real move or staleness', () => {
 
   const stale = { direction: 'BULLISH', score: 0.5, as_of: new Date(now - 20 * 60000) };
   assert.equal(isMaterialChange(stale, { direction: 'BULLISH', score: 0.5 }, gate, now), true);
+
+  // A confidence move is material even when the score and direction are unchanged, which is how
+  // aged evidence reaches the ledger and the stages downstream of it.
+  const withConfidence = { direction: 'BULLISH', score: 0.5, confidence: 0.6, as_of: new Date(now - 60000) };
+  assert.equal(isMaterialChange(withConfidence, { direction: 'BULLISH', score: 0.5, confidence: 0.62 }, gate, now), false);
+  assert.equal(isMaterialChange(withConfidence, { direction: 'BULLISH', score: 0.5, confidence: 0.3 }, gate, now), true);
 });

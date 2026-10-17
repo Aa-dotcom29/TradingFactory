@@ -43,10 +43,23 @@ const DEFAULT_BIAS_CONFIG = {
     pcrNeutral: 1.0,
     pcrSpan: 1.0,
     fullConfidenceAt: 10, // option contracts needed for full confidence
+    // OI spurts are intraday-session data. They age like a price read and, outside the session,
+    // last session's build-up is a settled prior rather than current flow.
+    freshMinutes: 15,
+    maxAgeMinutes: 60,
+    staleConfidenceFloor: 0.2,
+    closedSessionConfidence: 0.2,
   },
   news: {
     fullConfidenceAt: 5, // headlines on one entity needed for full confidence
     criticalConfidenceFactor: 0.5, // a critical event makes direction genuinely less certain
+    // Headlines age from their own publication time, not from when we captured them: an
+    // announcement made overnight is still news in the morning, so there is no session cap here.
+    // The fade window matches the 48h aggregation window, so news is fully decayed exactly when
+    // it drops out of the aggregate.
+    freshMinutes: 120,
+    maxAgeMinutes: 2880,
+    staleConfidenceFloor: 0.25,
   },
   price: {
     momentumSpan: 0.01, // a 1% move from previous close saturates the momentum component
@@ -64,8 +77,11 @@ const DEFAULT_BIAS_CONFIG = {
   },
   // Verdicts are only written when they say something new, so 24/7 operation does not write an
   // identical row every minute. History stays complete enough to forward-fill for backtesting.
+  // A confidence move counts as new: aging evidence lowers conviction without moving the score,
+  // and a stale row would otherwise let a call stand downstream after the confidence had gone.
   materialChange: {
     scoreDelta: 0.05,
+    confidenceDelta: 0.05,
     maxStaleMinutes: 15,
   },
 };
@@ -137,26 +153,38 @@ function unavailable(key, detail) {
   return { key, available: false, score: 0, confidence: 0, detail };
 }
 
-function newsSignal(entity, config) {
+function newsSignal(entity, config, options = {}) {
   if (!entity) return unavailable('news', 'no scored news on this entity');
   const pressure = num(entity.pressure);
   if (pressure === null) return unavailable('news', 'no pressure value');
 
   const itemCount = num(entity.itemCount) || 0;
   const severity = String(entity.maxSeverity || 'LOW').toUpperCase();
-  const confidence = clamp(itemCount / config.news.fullConfidenceAt, 0, 1)
+  const base = clamp(itemCount / config.news.fullConfidenceAt, 0, 1)
     * (severity === 'CRITICAL' ? config.news.criticalConfidenceFactor : 1);
+
+  // News ages from the newest headline on the entity, never from when we captured it: an
+  // announcement made after the close is still news in the morning. Unlike a price or an
+  // option-flow reading, a headline does not stop being news because the exchange is shut, so
+  // there is deliberately no session cap here.
+  const ageMinutes = ageMinutesSince(entity.latestAt || options.asOf || null, options.now);
+  const freshness = freshnessFactor(ageMinutes, config.news);
+  const confidence = clamp(base * freshness, 0, 1);
 
   return {
     key: 'news',
     available: true,
     score: clamp(pressure, -1, 1),
-    confidence: clamp(confidence, 0, 1),
-    detail: `${itemCount} item(s), severity ${severity}, net sentiment ${num(entity.netSentiment) ?? 0}, pressure ${round(clamp(pressure, -1, 1), 3)}`,
+    confidence,
+    detail: `${itemCount} item(s), severity ${severity}, net sentiment ${num(entity.netSentiment) ?? 0}, `
+      + `pressure ${round(clamp(pressure, -1, 1), 3)}`
+      + (ageMinutes !== null
+        ? ` [newest ${Math.round(ageMinutes / 60)}h old${freshness < 1 ? `, aged to ${round(freshness, 2)}` : ''}]`
+        : ''),
   };
 }
 
-function flowSignal(flow, config) {
+function flowSignal(flow, config, options = {}) {
   if (!flow) return unavailable('flow', 'no OI-spurt flow for this symbol');
 
   const longBuildup = num(flow.longBuildup) || 0;
@@ -203,35 +231,55 @@ function flowSignal(flow, config) {
   const coverage = clamp(optionCount / config.flow.fullConfidenceAt, 0, 1);
   const bothLegs = ce !== null && pe !== null ? 1 : 0.6;
 
+  // OI spurts are intraday-session data: they age like a price read, and outside the session the
+  // last session's build-up is a settled prior, not current flow.
+  const ageMinutes = ageMinutesSince(options.asOf || null, options.now);
+  const freshness = freshnessFactor(ageMinutes, config.flow);
+  const marketClosed = options.marketOpen === false;
+  const closedFactor = marketClosed ? clamp(num(config.flow.closedSessionConfidence) ?? 1, 0, 1) : 1;
+  const confidence = clamp(coverage * bothLegs * freshness * closedFactor, 0, 1);
+
+  const notes = [];
+  if (ageMinutes !== null) notes.push(`flow ${Math.round(ageMinutes)}m old`);
+  if (marketClosed) notes.push('market closed: last session flow is not live');
+  else if (freshness < 1) notes.push(`aged to ${round(freshness, 2)}`);
+
   return {
     key: 'flow',
     available: true,
     score,
-    confidence: clamp(coverage * bothLegs, 0, 1),
-    detail: `mix LB${longBuildup}/SB${shortBuildup}/SC${shortCovering}/LU${longUnwinding}, put-call OI ratio ${pcrText}`,
+    confidence,
+    detail: `mix LB${longBuildup}/SB${shortBuildup}/SC${shortCovering}/LU${longUnwinding}, put-call OI ratio ${pcrText}`
+      + (notes.length ? ` [${notes.join('; ')}]` : ''),
   };
 }
 
-// The exchange timestamp of a quote, or the moment we captured it, as epoch milliseconds. Yahoo
-// carries `quoteTime` (the exchange's own time); rows that do not (e.g. Angel today) fall back to
-// the feature `as_of` the worker passes in. Returns null when nothing can be dated, in which case
-// age is simply not penalised here - only the session check applies.
-function quoteAgeMinutes(quote, options = {}) {
-  if (!options.now) return null;
-  const raw = (quote && quote.quoteTime) || options.asOf || null;
-  if (!raw) return null;
+// Minutes between a timestamp and `now`, or null when either is missing or unparseable. Accepts a
+// Date, an ISO string or an epoch number, so any feature can be dated by its exchange time, its
+// own publication time, or the moment the worker captured it.
+function ageMinutesSince(raw, now) {
+  if (!now || !raw) return null;
   const at = raw instanceof Date ? raw.getTime() : Date.parse(raw);
   if (!Number.isFinite(at)) return null;
-  return Math.max(0, (new Date(options.now).getTime() - at) / 60000);
+  return Math.max(0, (new Date(now).getTime() - at) / 60000);
 }
 
-// 1 while the quote is fresh, then a straight line down to the floor at maxAgeMinutes. An unknown
-// age scores 1: we do not invent staleness we cannot measure.
-function freshnessFactor(ageMinutes, priceConfig) {
+// The exchange timestamp of a quote, or the moment we captured it, as minutes of age. Yahoo
+// carries `quoteTime` (the exchange's own time); rows that do not (e.g. Angel today) fall back to
+// the feature `as_of` the worker passes in. Null when nothing can be dated, in which case age is
+// simply not penalised - only the session check applies.
+function quoteAgeMinutes(quote, options = {}) {
+  return ageMinutesSince((quote && quote.quoteTime) || options.asOf || null, options.now);
+}
+
+// 1 while the evidence is fresh, then a straight line down to the floor at maxAgeMinutes. An
+// unknown age scores 1: we do not invent staleness we cannot measure. `window` is any component's
+// age window (freshMinutes / maxAgeMinutes / staleConfidenceFloor).
+function freshnessFactor(ageMinutes, window) {
   if (ageMinutes === null) return 1;
-  const fresh = num(priceConfig.freshMinutes) ?? 0;
-  const max = num(priceConfig.maxAgeMinutes) ?? fresh;
-  const floor = clamp(num(priceConfig.staleConfidenceFloor) ?? 0, 0, 1);
+  const fresh = num(window.freshMinutes) ?? 0;
+  const max = num(window.maxAgeMinutes) ?? fresh;
+  const floor = clamp(num(window.staleConfidenceFloor) ?? 0, 0, 1);
   if (ageMinutes <= fresh || max <= fresh) return 1;
   if (ageMinutes >= max) return floor;
   const decayed = 1 - (ageMinutes - fresh) / (max - fresh);
@@ -368,9 +416,10 @@ function combineVerdict({ symbol, horizon, signals, config }) {
 }
 
 // Builds one verdict per horizon for a symbol from the feature maps the worker loaded. `now` and
-// `marketOpen` are the session context the worker resolved; `quoteAsOf` dates rows that carry no
-// exchange timestamp of their own.
-function verdictsForSymbol({ symbol, features, config, now, marketOpen, quoteAsOf }) {
+// `marketOpen` are the session context the worker resolved; the `*AsOf` values date component
+// rows that carry no timestamp of their own (quotes and flow; news is dated by its own newest
+// headline).
+function verdictsForSymbol({ symbol, features, config, now, marketOpen, quoteAsOf, flowAsOf, newsAsOf }) {
   const news = features.news ? features.news.get(symbol) : null;
   const flow = features.flow ? features.flow.get(symbol) : null;
   const quote = features.quote ? features.quote.get(symbol) : null;
@@ -379,8 +428,8 @@ function verdictsForSymbol({ symbol, features, config, now, marketOpen, quoteAsO
     symbol,
     horizon,
     signals: {
-      news: newsSignal(news, config),
-      flow: flowSignal(flow, config),
+      news: newsSignal(news, config, { now, asOf: newsAsOf }),
+      flow: flowSignal(flow, config, { now, asOf: flowAsOf, marketOpen }),
       price: priceSignal(quote, config, { now, marketOpen, asOf: quoteAsOf }),
     },
     config,
@@ -389,12 +438,15 @@ function verdictsForSymbol({ symbol, features, config, now, marketOpen, quoteAsO
 
 // True when a verdict says something the stored one does not. Keeps the table meaningful
 // instead of writing an identical row on every tick.
-function isMaterialChange(previous, verdict, { scoreDelta, maxStaleMinutes }, now = Date.now()) {
+function isMaterialChange(previous, verdict, { scoreDelta, confidenceDelta, maxStaleMinutes }, now = Date.now()) {
   if (!previous) return true;
   if (previous.direction !== verdict.direction) return true;
   const priorScore = num(previous.score);
   if (priorScore === null) return true;
   if (Math.abs(priorScore - verdict.score) >= scoreDelta) return true;
+  const priorConfidence = num(previous.confidence);
+  const confidenceStep = num(confidenceDelta) ?? scoreDelta;
+  if (priorConfidence !== null && Math.abs(priorConfidence - verdict.confidence) >= confidenceStep) return true;
   const priorAt = previous.as_of instanceof Date ? previous.as_of.getTime() : Date.parse(previous.as_of || '');
   if (!Number.isFinite(priorAt)) return true;
   return now - priorAt >= maxStaleMinutes * 60000;
@@ -412,6 +464,7 @@ module.exports = {
   newsSignal,
   flowSignal,
   priceSignal,
+  ageMinutesSince,
   quoteAgeMinutes,
   freshnessFactor,
   combineVerdict,

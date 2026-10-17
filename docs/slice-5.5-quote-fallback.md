@@ -145,8 +145,10 @@ Test totals: harness 118/118 (11 new), web 20/20 (1 new), `harness:selfcheck` 31
    momentum. The score still reflects the last close, but a closed-market price read is capped at
    0.2 confidence, so it can no longer carry a call on its own. The +2.31% NIFTY figure above
    (Friday's session, read on Saturday) is now tagged `market closed: last close is not live`.
-   Remaining caveat: news and flow components are still not aged - only the price leg is, which
-   was the specific defect this note recorded.
+   The same treatment was then extended to the other two inputs: `flow` ages from its feature
+   `as_of` and is session-capped like price, and `news` ages from its newest headline
+   (`values.latestAt`) without a session cap, because a headline made after the close is still news
+   in the morning. See `harness-architecture.md` ("Evidence ageing").
 2. **Yahoo is delayed and unofficial.** Roughly fifteen minutes intraday, no SLA, no key, and it
    could change or rate-limit without notice. It is a bootstrap feed, not the target state. Angel
    One remains the authoritative source and the watermark on the pills is there to keep that
