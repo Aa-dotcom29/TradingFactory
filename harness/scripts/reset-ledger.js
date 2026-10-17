@@ -4,6 +4,10 @@
 //
 //   node harness/scripts/reset-ledger.js          # count only; changes nothing
 //   node harness/scripts/reset-ledger.js --yes    # clear the ledger
+//   npm run harness:reset-ledger -- --yes         # the same, through npm
+//
+// The `--` matters: npm consumes a bare `--yes` as its own flag, so `npm run ... --yes` prints the
+// count and exits without clearing anything - indistinguishable from success at a glance.
 //
 // Why this exists: a published signal is the open-position ledger until the evaluator closes it, so
 // signals raised while the pipeline was being built occupy real exposure slots and hold them for a
@@ -68,7 +72,10 @@ async function main() {
 
   const total = before.reduce((sum, [, n]) => sum + n, 0);
   if (!yes) {
-    console.log(`\n${total} row(s) would be cleared. Re-run with --yes to do it.`);
+    console.log(`\n${total} row(s) would be cleared. Nothing has changed.`);
+    console.log('To clear them:');
+    console.log('  node harness/scripts/reset-ledger.js --yes');
+    console.log('  npm run harness:reset-ledger -- --yes    (npm swallows a bare --yes, so the -- is required)');
     return 0;
   }
   if (total === 0) {

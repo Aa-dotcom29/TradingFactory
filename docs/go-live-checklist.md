@@ -69,9 +69,14 @@ an open position for a whole holding window (see [`risk-decision-trace.md`](./ri
 Clear them once, before the first live signal, so exposure and the evaluator start honest.
 
 ```bash
-npm run harness:reset-ledger          # counts only, changes nothing
-npm run harness:reset-ledger --yes    # clears signals, candidates, stages, decisions, outcomes, queue
+npm run harness:reset-ledger            # counts only, changes nothing
+npm run harness:reset-ledger -- --yes   # clears signals, candidates, stages, decisions, outcomes, queue
 ```
+
+The `--` is not optional. npm treats a bare `--yes` as its own flag and swallows it, so
+`npm run harness:reset-ledger --yes` prints the count and exits **without clearing anything** -
+which looks exactly like a successful reset. The script also runs directly, with no npm in the
+way: `node harness/scripts/reset-ledger.js --yes`.
 
 It leaves `config_registry` (the approved limits), `sources_health` and every evidence table
 (news, snapshots, OI spurts, features, bias) untouched.

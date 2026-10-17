@@ -58,7 +58,7 @@ npm run harness:schema        # apply schema.sql to DATABASE_URL
 npm run harness:once          # run a single ingestion cycle
 npm run harness               # run continuously (default role: every worker)
 npm run harness:daily         # single cycle, dry (no network/DB)
-npm run harness:reset-ledger  # clear the signal ledger before go-live (see docs/go-live-checklist.md)
+npm run harness:reset-ledger -- --yes   # clear the dev signal ledger before go-live (see docs/go-live-checklist.md)
 ```
 
 Market-derived polling is session-gated: once the NSE is shut, the quote and OI-spurt cycles skip
