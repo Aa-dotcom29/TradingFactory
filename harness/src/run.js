@@ -13,6 +13,7 @@
 //   w4            - signal builder (lifecycle + candidates)
 //   w5            - risk gate
 //   w6            - publisher (Telegram, shadow-first)
+//   w7            - evaluator (closes positions, scores outcomes, proposes configs)
 //   w8            - supervisor
 // Splitting roles lets a busy worker scale out later without changing the code.
 
@@ -26,9 +27,10 @@ const { BiasWorker } = require('./workers/w3-bias');
 const { SignalWorker } = require('./workers/w4-signals');
 const { RiskWorker } = require('./workers/w5-risk');
 const { PublishWorker } = require('./workers/w6-publish');
+const { EvaluateWorker } = require('./workers/w7-evaluate');
 const { Supervisor } = require('./workers/w8-supervisor');
 
-const ROLES = ['all', 'w0', 'w1', 'w2', 'w3', 'w4', 'w5', 'w6', 'w8'];
+const ROLES = ['all', 'w0', 'w1', 'w2', 'w3', 'w4', 'w5', 'w6', 'w7', 'w8'];
 
 function parseArgs(argv) {
   const flags = { once: false, dry: false, role: null };
@@ -46,6 +48,7 @@ const ACTIVITY_KEYS = [
   'processed', 'duplicates', 'failed', 'entities', 'items', 'symbols',
   'quotes', 'rows', 'queued', 'purged', 'purgedStale', 'persisted', 'emitted',
   'candidates', 'superseded', 'stages', 'approved', 'rejected', 'deferred', 'published',
+  'closed',
 ];
 
 function idleTick(result) {
@@ -111,6 +114,7 @@ async function main() {
   const signals = has('w4') ? new SignalWorker() : null;
   const risk = has('w5') ? new RiskWorker() : null;
   const publisher = has('w6') ? new PublishWorker() : null;
+  const evaluator = has('w7') ? new EvaluateWorker() : null;
   const supervisor = has('w8') ? new Supervisor() : null;
 
   const timers = [];
@@ -132,6 +136,7 @@ async function main() {
     if (signals) log.info('signal result', await signals.runOnce({ force: true }));
     if (risk) log.info('risk result', await risk.runOnce({ force: true }));
     if (publisher) log.info('publish result', await publisher.runOnce());
+    if (evaluator) log.info('evaluate result', await evaluator.runOnce());
     if (supervisor) {
       await supervisor.heartbeat();
       await supervisor.housekeeping();
@@ -170,6 +175,10 @@ async function main() {
   if (publisher) {
     await publisher.runOnce();
     timers.push(setInterval(makeGuard('publisher', () => publisher.runOnce()), config.poll.scoreMs));
+  }
+  if (evaluator) {
+    await evaluator.runOnce();
+    timers.push(setInterval(makeGuard('evaluator', () => evaluator.runOnce()), config.poll.scoreMs));
   }
   if (supervisor) {
     await supervisor.heartbeat();

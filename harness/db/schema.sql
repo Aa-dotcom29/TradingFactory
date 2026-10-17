@@ -418,6 +418,34 @@ alter table bias_verdicts add column if not exists provenance text;
 alter table signal_candidates add column if not exists provenance text;
 create index if not exists features_provenance_idx on features (feature_set, provenance, as_of desc);
 
+-- ---------------------------------------------------------------------------
+-- Slice 7 - the evaluator (W7)
+--
+-- Published signals doubled as the open-position ledger because nothing could close them. W7
+-- walks the recorded price path, decides whether the target, the stop or the holding window
+-- ended the trade, and writes that as an `outcomes` row. Those rows are exactly what the risk
+-- gate's loss controls read - three of the fourteen gates reported SKIPPED for want of them.
+--
+-- `outcomes` holds closed trades only. A position that is still open, or that cannot be priced
+-- honestly (an option-premium plan with no option quotes), gets no row: "no outcome" is the
+-- truthful state and the dashboard derives the reason live rather than storing a placeholder.
+--
+-- One position closes exactly once, so `signal_id` becomes unique. That is what makes the
+-- evaluator idempotent - a replayed message or a safety-net scan collides with the existing row
+-- instead of writing a second, contradicting one. The table shipped with a plain index, so any
+-- duplicates a running database already holds are collapsed to the newest row first rather than
+-- failing the migration and blocking startup.
+-- ---------------------------------------------------------------------------
+delete from outcomes o
+  using outcomes other
+ where o.signal_id = other.signal_id
+   and (o.evaluated_at < other.evaluated_at
+        or (o.evaluated_at = other.evaluated_at and o.id < other.id));
+
+create unique index if not exists outcomes_signal_unique_idx on outcomes (signal_id);
+create index if not exists outcomes_evaluated_idx on outcomes (evaluated_at desc);
+create index if not exists outcomes_horizon_result_idx on outcomes (horizon, result);
+
 insert into schema_migrations (version) values ('0001_harness_backbone')
   on conflict (version) do nothing;
 insert into schema_migrations (version) values ('0002_slice1_auth')
@@ -429,6 +457,8 @@ insert into schema_migrations (version) values ('0004_slice4_signals')
 insert into schema_migrations (version) values ('0005_slice5_risk_publish')
   on conflict (version) do nothing;
 insert into schema_migrations (version) values ('0006_slice5_quote_fallback')
+  on conflict (version) do nothing;
+insert into schema_migrations (version) values ('0007_slice7_evaluate')
   on conflict (version) do nothing;
 
 commit;

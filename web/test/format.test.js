@@ -17,6 +17,9 @@ import {
   publishModeTone,
   provenanceTone,
   provenanceLabel,
+  outcomeTone,
+  resultTone,
+  resultLabel,
   istStamp,
   timeAgo,
 } from '../lib/format.js';
@@ -104,6 +107,27 @@ test('provenance never dresses a delayed read up as a live one', () => {
   assert.equal(provenanceLabel('angel-live'), 'live feed');
   assert.equal(provenanceLabel('yahoo-delayed'), 'delayed quotes');
   assert.equal(provenanceLabel(null), 'source unknown');
+});
+
+// Slice 7: a settled position. Green only for a profit, red only for a loss, and TIME is its own
+// colour because "the window ran out" is neither until you read the P&L.
+test('outcome tones separate profit, loss and a flat close', () => {
+  assert.equal(outcomeTone(10), 'up');
+  assert.equal(outcomeTone(-4.2), 'down');
+  assert.equal(outcomeTone(0), 'muted');
+  assert.equal(outcomeTone(null), 'muted');
+  assert.equal(outcomeTone('not-a-number'), 'muted');
+});
+
+test('exit reasons colour by what ended the trade, not by profit', () => {
+  assert.equal(resultTone('TARGET'), 'up');
+  assert.equal(resultTone('STOP'), 'down');
+  assert.equal(resultTone('TIME'), 'warn');
+  assert.equal(resultTone(undefined), 'muted');
+  assert.equal(resultLabel('TARGET'), 'target hit');
+  assert.equal(resultLabel('STOP'), 'stopped out');
+  assert.equal(resultLabel('TIME'), 'window ended');
+  assert.equal(resultLabel(null), 'open');
 });
 
 test('istStamp renders in Asia/Kolkata, not local time', () => {

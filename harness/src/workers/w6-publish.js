@@ -179,6 +179,15 @@ class PublishWorker {
       });
     }
 
+    // A published signal is a position to watch. This is a nudge, not an instruction: W7 re-reads
+    // the signal from `signals` and its durable scan covers anything this notification misses.
+    await queue.enqueue(TOPICS.PUBLISHED, {
+      signalId,
+      horizon: candidate.horizon,
+      symbol: candidate.symbol,
+      mode,
+    }).catch((error) => log.warn('could not queue published signal', { signalId, error: error.message }));
+
     return { status: state, signalId, delivered: result.delivered };
   }
 

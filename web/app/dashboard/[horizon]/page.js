@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import {
   getSignals, getFlow, getNews, getEntityFeatures, getFlowFeatures, getBias,
   getSignalStages, getSignalCandidates, getRiskDecisions, getHorizonPulse,
+  getOutcomes, getOutcomeStats, getOpenPositions,
 } from '@/lib/queries';
 import { horizonByKey } from '@/lib/horizons';
 import StatusBanner from '@/components/StatusBanner';
@@ -9,6 +10,7 @@ import SignalList from '@/components/SignalList';
 import SignalStages from '@/components/SignalStages';
 import SignalCandidates from '@/components/SignalCandidates';
 import RiskDecisions from '@/components/RiskDecisions';
+import Outcomes from '@/components/Outcomes';
 import FlowPanel, { FlowUnderlyings } from '@/components/FlowPanel';
 import EntityIntel from '@/components/EntityIntel';
 import FlowFeatures from '@/components/FlowFeatures';
@@ -28,7 +30,7 @@ export default async function HorizonPage({ params }) {
   const horizon = horizonByKey(raw);
   if (!horizon) notFound();
 
-  const [signals, flow, news, entityData, flowFeatures, bias, stages, candidates, riskDecisions, pulse] = await Promise.all([
+  const [signals, flow, news, entityData, flowFeatures, bias, stages, candidates, riskDecisions, pulse, closed, outcomeStats, openPositions] = await Promise.all([
     getSignals(horizon.key),
     getFlow(horizon.key === 'POSITIONAL' ? 12 : 20),
     getNews(20),
@@ -39,6 +41,9 @@ export default async function HorizonPage({ params }) {
     getSignalCandidates(horizon.key, 10),
     getRiskDecisions(horizon.key, 8),
     getHorizonPulse(horizon.key),
+    getOutcomes(horizon.key, 10),
+    getOutcomeStats(horizon.key),
+    getOpenPositions(horizon.key, 8),
   ]);
 
   const live = String(process.env.PUBLISH_MODE || 'shadow').toLowerCase() === 'live';
@@ -66,6 +71,8 @@ export default async function HorizonPage({ params }) {
           { k: 'bullish', v: pulse.bullish },
           { k: 'building', v: pulse.building },
           { k: 'queued', v: pulse.queued },
+          { k: 'open', v: pulse.openPositions },
+          { k: 'closed 24h', v: pulse.closed24h },
           { k: 'approved 24h', v: pulse.approved24h },
           { k: 'delivered 24h', v: pulse.published24h },
         ]}
@@ -117,6 +124,16 @@ export default async function HorizonPage({ params }) {
           was closed.
         </p>
         <RiskDecisions decisions={riskDecisions} />
+      </section>
+
+      <section className="card">
+        <h2>Outcomes</h2>
+        <p className="hint">
+          {horizon.label}-horizon positions that have been settled: their exit, the level that ended
+          them, and how far they ran either side before closing. This is also what the risk gate
+          reads to decide whether this horizon has earned the right to keep trading.
+        </p>
+        <Outcomes stats={outcomeStats} closed={closed} open={openPositions} />
       </section>
 
       {horizon.flow ? (

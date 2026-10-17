@@ -175,3 +175,31 @@ export function provenanceLabel(provenance) {
   if (value === 'yahoo-delayed') return 'delayed quotes';
   return value || 'source unknown';
 }
+
+// Slice 7: a closed trade. Green only for a profit and red only for a loss - a flat close is
+// neither, and an unknown P&L is not evidence of anything.
+export function outcomeTone(pnlPct) {
+  const n = toNumber(pnlPct);
+  if (!Number.isFinite(n)) return 'muted';
+  if (n > 0) return 'up';
+  if (n < 0) return 'down';
+  return 'muted';
+}
+
+// How a position ended. TARGET and STOP are the plan working as written; TIME means the horizon
+// ran out with neither level reached, which is neither a win nor a loss until you read the P&L.
+export function resultTone(result) {
+  const v = String(result || '').toUpperCase();
+  if (v === 'TARGET') return 'up';
+  if (v === 'STOP') return 'down';
+  if (v === 'TIME') return 'warn';
+  return 'muted';
+}
+
+export function resultLabel(result) {
+  const v = String(result || '').toUpperCase();
+  if (v === 'TARGET') return 'target hit';
+  if (v === 'STOP') return 'stopped out';
+  if (v === 'TIME') return 'window ended';
+  return v ? v.toLowerCase() : 'open';
+}

@@ -22,6 +22,8 @@ const { BiasWorker } = require('./workers/w3-bias');
 const { SignalWorker } = require('./workers/w4-signals');
 const { RiskWorker } = require('./workers/w5-risk');
 const { PublishWorker } = require('./workers/w6-publish');
+const { EvaluateWorker, holdingDaysFor } = require('./workers/w7-evaluate');
+const { STATUS, evaluateOutcome, scoreOutcomes, proposeConfigChange } = require('./outcome');
 const rss = require('./sources/rss');
 const yahoo = require('./sources/yahoo');
 
@@ -261,6 +263,80 @@ async function pureFunctionChecks() {
   record(
     'slice 5.5 price signal reads the fallback quote',
     priceSignal({ ltp: yahooQuote.ltp, close: yahooQuote.close, high: yahooQuote.high, low: yahooQuote.low }, biasConfig).available === true,
+  );
+
+  // --- Slice 7: the evaluator -------------------------------------------------------------
+  const T7 = Date.parse('2026-10-14T05:00:00Z');
+  const t7 = (minutes) => new Date(T7 + minutes * 60000).toISOString();
+  const swingSignal = {
+    horizon: 'SWING', symbol: 'NIFTY', direction: 'BULLISH', instrument: 'SPOT',
+    entry: 100, target: 110, stop: 95, publishedAt: t7(0), snapshot: { plan: { kind: 'SPOT' } },
+  };
+
+  const closed = evaluateOutcome({
+    signal: swingSignal,
+    path: [{ at: t7(10), price: 104 }, { at: t7(20), price: 111 }],
+    holdingDays: 30,
+    now: T7 + 60000,
+  });
+  record(
+    'slice 7 a long reaching its target closes at the target',
+    closed.status === STATUS.CLOSED && closed.result === 'TARGET' && closed.exit === 110 && closed.pnlPct === 10,
+    `result=${closed.result} exit=${closed.exit} pnl=${closed.pnlPct}`,
+  );
+
+  const expired = evaluateOutcome({
+    signal: swingSignal,
+    path: [{ at: t7(10), price: 101 }],
+    holdingDays: 1,
+    now: T7 + 2 * 86400000,
+  });
+  record(
+    'slice 7 an expired holding window closes as TIME at the in-window price',
+    expired.status === STATUS.CLOSED && expired.result === 'TIME' && expired.exit === 101,
+    `result=${expired.result} exit=${expired.exit}`,
+  );
+
+  const optionPlan = evaluateOutcome({
+    signal: { ...swingSignal, instrument: 'OPTION', strike: 25000, option_type: 'CE' },
+    path: [{ at: t7(10), price: 111 }],
+    holdingDays: 30,
+    now: T7 + 60000,
+  });
+  record(
+    'slice 7 an option-premium plan is refused rather than scored on the underlying',
+    optionPlan.status === STATUS.AWAITING_PRICE_SOURCE,
+    `status=${optionPlan.status}`,
+  );
+
+  const stats7 = scoreOutcomes([
+    { pnl_pct: 10, result: 'TARGET', horizon: 'SWING' },
+    { pnl_pct: -5, result: 'STOP', horizon: 'SWING' },
+  ]);
+  record(
+    'slice 7 scoring reports a 50% win rate and a negative-breaking expectancy',
+    stats7.total === 2 && stats7.winRatePct === 50 && stats7.expectancyPct === 2.5,
+    `winRate=${stats7.winRatePct} expectancy=${stats7.expectancyPct}`,
+  );
+
+  const guarded = proposeConfigChange({ stats: { total: 2, winRatePct: 0 }, currentConfig: { config: { gates: { minConfidence: 0.4 } } } });
+  const proposed7 = proposeConfigChange({
+    stats: { total: 40, winRatePct: 20, expectancyPct: -1, avgLossPct: -4, avgMaePct: -6, avgWinPct: 3 },
+    currentConfig: { config: { gates: { minConfidence: 0.4 } } },
+  });
+  record(
+    'slice 7 proposals need a sample and only ever tighten, never apply',
+    guarded.proposed === false && proposed7.proposed === true
+      && proposed7.change.direction === 'tighten' && proposed7.config.gates.minConfidence === 0.45,
+    `guarded=${guarded.proposed} proposed=${proposed7.proposed}`,
+  );
+
+  record(
+    'slice 7 worker wiring and the shared holding window',
+    typeof EvaluateWorker === 'function' && TOPICS.PUBLISHED === 'signal.published'
+      && holdingDaysFor(DEFAULT_RISK_CONFIG, 'INTRADAY') === 1
+      && holdingDaysFor(DEFAULT_RISK_CONFIG, 'SWING') === 30
+      && holdingDaysFor(DEFAULT_RISK_CONFIG, 'POSITIONAL') === 180,
   );
 }
 

@@ -30,7 +30,14 @@ export async function getHealth() {
         (select count(*)::int from (
           select distinct on (horizon, symbol) horizon, symbol, stage from signal_stages
           order by horizon, symbol, as_of desc
-        ) s where s.stage = 'READY') as stages_ready
+        ) s where s.stage = 'READY') as stages_ready,
+        (select count(*)::int from outcomes) as outcomes_total,
+        (select count(*)::int from outcomes
+          where evaluated_at > now() - interval '24 hours') as outcomes_24h,
+        (select count(*)::int from signals s
+          left join outcomes o on o.signal_id = s.id
+          where o.id is null) as positions_open,
+        (select count(*)::int from config_registry where status = 'candidate') as proposals_pending
     `;
     return { configured: true, sources, counts: rows[0] || null, error: null };
   } catch (error) {
@@ -119,6 +126,7 @@ export async function getHorizonPulse(horizon) {
   const empty = {
     tracked: 0, bullish: 0, bearish: 0, ready: 0, building: 0,
     queued: 0, approved24h: 0, rejected24h: 0, published24h: 0, live24h: 0,
+    closed24h: 0, openPositions: 0,
   };
   const sql = db();
   if (!sql) return empty;
@@ -154,7 +162,13 @@ export async function getHorizonPulse(horizon) {
         (select count(*)::int from signals
           where horizon = ${horizon}
             and published_at > now() - interval '24 hours'
-            and snapshot->>'mode' = 'live') as live24h
+            and snapshot->>'mode' = 'live') as live24h,
+        (select count(*)::int from outcomes
+          where horizon = ${horizon}
+            and evaluated_at > now() - interval '24 hours') as closed24h,
+        (select count(*)::int from signals s
+          left join outcomes o on o.signal_id = s.id
+          where o.id is null and s.horizon = ${horizon}) as openPositions
     `;
     return rows[0] || empty;
   } catch {
@@ -428,6 +442,187 @@ export async function getRiskDecisions(horizon = null, limit = 12) {
       from risk_decisions d
       left join signal_candidates c on c.id = d.candidate_id
       order by d.evaluated_at desc
+      limit ${limit}
+    `;
+  } catch {
+    return [];
+  }
+}
+
+// Slice 7: the closed-trade ledger. Every other panel describes a proposal; this is the record of
+// what actually happened. `payload` carries how the exit was reached, so an ambiguous bar close
+// is visible rather than smoothed over.
+export async function getOutcomes(horizon = null, limit = 12) {
+  const sql = db();
+  if (!sql) return [];
+  try {
+    if (horizon) {
+      return await sql`
+        select o.id, o.evaluated_at, o.horizon, o.result, o.entry, o.exit, o.pnl_pct,
+               o.mfe as mfe_pct, o.mae as mae_pct, o.bars_held, o.payload,
+               s.symbol, s.direction, s.instrument, s.strike, s.option_type, s.confidence,
+               s.target, s.stop, s.published_at, s.snapshot
+        from outcomes o
+        join signals s on s.id = o.signal_id
+        where o.horizon = ${horizon}
+        order by o.evaluated_at desc
+        limit ${limit}
+      `;
+    }
+    return await sql`
+      select o.id, o.evaluated_at, o.horizon, o.result, o.entry, o.exit, o.pnl_pct,
+             o.mfe as mfe_pct, o.mae as mae_pct, o.bars_held, o.payload,
+             s.symbol, s.direction, s.instrument, s.strike, s.option_type, s.confidence,
+             s.target, s.stop, s.published_at, s.snapshot
+      from outcomes o
+      join signals s on s.id = o.signal_id
+      order by o.evaluated_at desc
+      limit ${limit}
+    `;
+  } catch {
+    return [];
+  }
+}
+
+// Positions that have been published and not yet settled. The evaluator cannot close what it
+// cannot price, so an option-premium plan sits here waiting for option quote history rather than
+// being scored against the underlying. Saying so is the point.
+export async function getOpenPositions(horizon = null, limit = 10) {
+  const sql = db();
+  if (!sql) return [];
+  try {
+    if (horizon) {
+      return await sql`
+        select s.id, s.horizon, s.symbol, s.direction, s.instrument, s.strike, s.option_type,
+               s.entry, s.target, s.stop, s.confidence, s.published_at, s.snapshot,
+               (s.strike is not null or s.option_type is not null) as option_plan
+        from signals s
+        left join outcomes o on o.signal_id = s.id
+        where o.id is null and s.horizon = ${horizon}
+        order by s.published_at desc
+        limit ${limit}
+      `;
+    }
+    return await sql`
+      select s.id, s.horizon, s.symbol, s.direction, s.instrument, s.strike, s.option_type,
+             s.entry, s.target, s.stop, s.confidence, s.published_at, s.snapshot,
+             (s.strike is not null or s.option_type is not null) as option_plan
+      from signals s
+      left join outcomes o on o.signal_id = s.id
+      where o.id is null
+      order by s.published_at desc
+      limit ${limit}
+    `;
+  } catch {
+    return [];
+  }
+}
+
+// The scorecard, aggregated in SQL over the retention window. Win rate and expectancy are derived
+// here because they are ratios of the aggregates; everything else is a straight average.
+export async function getOutcomeStats(horizon = null) {
+  const sql = db();
+  const empty = {
+    total: 0, wins: 0, losses: 0, flats: 0, winRatePct: null, avgPnlPct: null,
+    totalPnlPct: null, avgWinPct: null, avgLossPct: null, expectancyPct: null,
+    avgMfePct: null, avgMaePct: null, targets: 0, stops: 0, times: 0,
+  };
+  if (!sql) return empty;
+
+  const round = (value, places = 2) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    const factor = 10 ** places;
+    return Math.round(n * factor) / factor;
+  };
+
+  try {
+    const rows = horizon
+      ? await sql`
+          select
+            count(*)::int as total,
+            count(*) filter (where pnl_pct > 0)::int as wins,
+            count(*) filter (where pnl_pct < 0)::int as losses,
+            count(*) filter (where pnl_pct = 0)::int as flats,
+            avg(pnl_pct) as avg_pnl_pct,
+            sum(pnl_pct) as total_pnl_pct,
+            avg(pnl_pct) filter (where pnl_pct > 0) as avg_win_pct,
+            avg(pnl_pct) filter (where pnl_pct < 0) as avg_loss_pct,
+            avg(mfe) as avg_mfe_pct,
+            avg(mae) as avg_mae_pct,
+            count(*) filter (where result = 'TARGET')::int as targets,
+            count(*) filter (where result = 'STOP')::int as stops,
+            count(*) filter (where result = 'TIME')::int as times
+          from outcomes
+          where evaluated_at >= now() - interval '90 days' and horizon = ${horizon}
+        `
+      : await sql`
+          select
+            count(*)::int as total,
+            count(*) filter (where pnl_pct > 0)::int as wins,
+            count(*) filter (where pnl_pct < 0)::int as losses,
+            count(*) filter (where pnl_pct = 0)::int as flats,
+            avg(pnl_pct) as avg_pnl_pct,
+            sum(pnl_pct) as total_pnl_pct,
+            avg(pnl_pct) filter (where pnl_pct > 0) as avg_win_pct,
+            avg(pnl_pct) filter (where pnl_pct < 0) as avg_loss_pct,
+            avg(mfe) as avg_mfe_pct,
+            avg(mae) as avg_mae_pct,
+            count(*) filter (where result = 'TARGET')::int as targets,
+            count(*) filter (where result = 'STOP')::int as stops,
+            count(*) filter (where result = 'TIME')::int as times
+          from outcomes
+          where evaluated_at >= now() - interval '90 days'
+        `;
+
+    const row = rows[0] || {};
+    const total = Number(row.total || 0);
+    if (!total) return empty;
+
+    const wins = Number(row.wins || 0);
+    const winRate = (wins / total) * 100;
+    const avgWin = round(row.avg_win_pct);
+    const avgLoss = round(row.avg_loss_pct);
+    // Expectancy needs a win and a loss to mean anything. A 100% win rate off two trades is not a
+    // signal, and reporting a number anyway is how a quiet system talks itself into a big one.
+    const expectancy = avgWin !== null && avgLoss !== null
+      ? round((winRate / 100) * avgWin + (1 - winRate / 100) * avgLoss)
+      : null;
+
+    return {
+      total,
+      wins,
+      losses,
+      flats: Number(row.flats || 0),
+      winRatePct: round(winRate),
+      avgPnlPct: round(row.avg_pnl_pct),
+      totalPnlPct: round(row.total_pnl_pct),
+      avgWinPct: avgWin,
+      avgLossPct: avgLoss,
+      expectancyPct: expectancy,
+      avgMfePct: round(row.avg_mfe_pct),
+      avgMaePct: round(row.avg_mae_pct),
+      targets: Number(row.targets || 0),
+      stops: Number(row.stops || 0),
+      times: Number(row.times || 0),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+// Slice 7: config changes the evaluator has proposed and a person has not yet approved. These are
+// `candidate` rows - every worker resolves the latest *approved* version, so an unapproved
+// proposal has no effect anywhere. It is a request for a decision, not a change.
+export async function getProposals(limit = 5) {
+  const sql = db();
+  if (!sql) return [];
+  try {
+    return await sql`
+      select version, family, created_by, created_at, status, metrics, config
+      from config_registry
+      where status = 'candidate'
+      order by created_at desc
       limit ${limit}
     `;
   } catch {

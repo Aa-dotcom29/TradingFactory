@@ -1,4 +1,4 @@
-import { getHealth, getNews, getFlow, getEntityFeatures, getFlowFeatures, getBiasOverview, getSignalStageOverview, getSignalCandidates, getRiskDecisions } from '@/lib/queries';
+import { getHealth, getNews, getFlow, getEntityFeatures, getFlowFeatures, getBiasOverview, getSignalStageOverview, getSignalCandidates, getRiskDecisions, getOutcomes, getOutcomeStats, getOpenPositions, getProposals } from '@/lib/queries';
 import NewsList from '@/components/NewsList';
 import FlowPanel, { FlowUnderlyings } from '@/components/FlowPanel';
 import EntityIntel from '@/components/EntityIntel';
@@ -7,6 +7,8 @@ import BiasPanel from '@/components/BiasPanel';
 import SignalStages from '@/components/SignalStages';
 import SignalCandidates from '@/components/SignalCandidates';
 import RiskDecisions from '@/components/RiskDecisions';
+import Outcomes from '@/components/Outcomes';
+import Proposals from '@/components/Proposals';
 import HealthTable from '@/components/HealthTable';
 import PipelineStrip from '@/components/PipelineStrip';
 import ConsensusMeter from '@/components/ConsensusMeter';
@@ -17,7 +19,10 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Overview - Trading Factory' };
 
 export default async function OverviewPage() {
-  const [health, news, flow, entityData, flowFeatures, bias, lifecycle, candidates, riskDecisions] = await Promise.all([
+  const [
+    health, news, flow, entityData, flowFeatures, bias, lifecycle, candidates, riskDecisions,
+    closed, outcomeStats, openPositions, proposals,
+  ] = await Promise.all([
     getHealth(),
     getNews(12),
     getFlow(10),
@@ -27,6 +32,10 @@ export default async function OverviewPage() {
     getSignalStageOverview(6),
     getSignalCandidates(null, 4),
     getRiskDecisions(null, 6),
+    getOutcomes(null, 8),
+    getOutcomeStats(null),
+    getOpenPositions(null, 6),
+    getProposals(5),
   ]);
 
   const counts = health.counts || {};
@@ -53,6 +62,15 @@ export default async function OverviewPage() {
       value: counts.signals_shadow_24h ?? 0,
       unit: '24h',
       note: String(mode).toLowerCase() === 'live' ? 'delivered to Telegram' : 'shadow only, nothing sent',
+    },
+    {
+      id: 'W7',
+      name: 'Evaluate',
+      value: counts.outcomes_24h ?? 0,
+      unit: 'closed 24h',
+      note: outcomeStats.total
+        ? `${counts.positions_open ?? 0} still open, ${outcomeStats.winRatePct ?? '-'}% win rate`
+        : `${counts.positions_open ?? 0} still open`,
       terminal: true,
     },
   ];
@@ -81,6 +99,8 @@ export default async function OverviewPage() {
             { k: 'ready', v: counts.stages_ready ?? 0 },
             { k: 'approved 24h', v: counts.risk_approved_24h ?? 0 },
             { k: 'delivered 24h', v: counts.signals_24h ?? 0 },
+            { k: 'open', v: counts.positions_open ?? 0 },
+            { k: 'closed 24h', v: counts.outcomes_24h ?? 0 },
           ]}
           note={
             live
@@ -131,6 +151,24 @@ export default async function OverviewPage() {
           <div className="v">{counts.signals_shadow_24h ?? 0}</div>
         </div>
         <div className="stat">
+          <div className="k">Positions open</div>
+          <div className="v">{counts.positions_open ?? 0}</div>
+        </div>
+        <div className="stat">
+          <div className="k">Closed (24h)</div>
+          <div className="v">{counts.outcomes_24h ?? 0}</div>
+        </div>
+        <div className="stat">
+          <div className="k">Win rate</div>
+          <div className={`v${outcomeStats.winRatePct == null ? '' : (outcomeStats.winRatePct >= 50 ? ' tone-up' : ' tone-down')}`}>
+            {outcomeStats.winRatePct == null ? '-' : `${outcomeStats.winRatePct}%`}
+          </div>
+        </div>
+        <div className="stat">
+          <div className="k">Proposals</div>
+          <div className={`v${counts.proposals_pending ? ' tone-warn' : ''}`}>{counts.proposals_pending ?? 0}</div>
+        </div>
+        <div className="stat">
           <div className="k">Feeds healthy</div>
           <div className="v">{healthy}<span className="u">of {sources.length}</span></div>
         </div>
@@ -166,6 +204,27 @@ export default async function OverviewPage() {
           closed, not that anything failed.
         </p>
         <RiskDecisions decisions={riskDecisions} showHorizon />
+      </section>
+
+      <section className="card">
+        <h2>Outcomes</h2>
+        <p className="hint">
+          What actually happened. A published signal becomes an outcome when it reaches its target,
+          hits its stop, or its horizon&apos;s holding window runs out. This is the record the risk
+          gate reads before it approves anything else, so an empty ledger means the loss controls
+          are running blind &mdash; not that the system is clean.
+        </p>
+        <Outcomes stats={outcomeStats} closed={closed} open={openPositions} showHorizon />
+      </section>
+
+      <section className="card">
+        <h2>Proposed config changes</h2>
+        <p className="hint">
+          The evaluator may propose a change to its own limits; it can never apply one. A proposal
+          is a <code>candidate</code> config row, and every worker resolves the latest
+          <em> approved</em> version, so nothing here is live. It waits for a person.
+        </p>
+        <Proposals proposals={proposals} />
       </section>
 
       <div className="grid cols-2">
