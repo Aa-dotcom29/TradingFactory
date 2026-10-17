@@ -142,6 +142,7 @@ test('a complete, liquid, fresh candidate is approved and uncheckable gates say 
   assert.equal(result.decision, 'APPROVED');
   assert.equal(result.approved, true);
   assert.deepEqual(result.reasons, ['every risk gate passed']);
+  assert.deepEqual(result.bypassed, []);
   assert.equal(result.configVersion, 'risk-v1');
   // No closed trades exist yet, so the loss controls are honest SKIPPEDs rather than passes.
   assert.equal(gate(result, 'consecutiveLossHalt').status, 'SKIPPED');
@@ -232,6 +233,20 @@ test('session enforcement can be switched off in config and says so', () => {
   });
   assert.equal(result.decision, 'APPROVED');
   assert.equal(gate(result, 'session').status, 'SKIPPED');
+  // The approval leaned on a control switched off in config, so it must name the bypass rather
+  // than read like an ordinary pass. (This is the shape the four after-hours rows lacked.)
+  assert.equal(gate(result, 'session').bypassed, true);
+  assert.deepEqual(result.bypassed, ['session']);
+  assert.equal(result.reasons.some((line) => line.includes('controls switched off in config')), true);
+});
+
+test('a switched-off liquidity control is named as a bypass too', () => {
+  const relaxed = resolveRiskConfig({ gates: { liquidityRequired: false } });
+  const result = evaluateRisk({ candidate: candidate(), context: context(), config: relaxed, now: WED_1030_IST });
+  assert.equal(result.decision, 'APPROVED');
+  assert.equal(gate(result, 'liquidity').status, 'SKIPPED');
+  assert.deepEqual(result.bypassed, ['liquidity']);
+  assert.equal(result.reasons.some((line) => line.includes('controls switched off in config')), true);
 });
 
 test('a stale candidate is rejected', () => {

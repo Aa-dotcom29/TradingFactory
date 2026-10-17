@@ -180,10 +180,18 @@ function evaluateRisk({ candidate, context = {}, config, now = Date.now() }) {
 
   // 3. Session. We can only enter while the exchange is open, so a proposal raised outside hours
   //    is deferred rather than rejected - it may still be valid when the market opens.
+  //    Switching session enforcement off is the one control whose disabling turns the market-hours
+  //    requirement into a plain APPROVED, so the skip is marked `bypassed` and named in the
+  //    decision's reasons. An approval that leaned on a switched-off control must never look like
+  //    an ordinary one in the audit trail.
   const session = context.session || marketSession(now, gates.session);
-  if (!gates.session.enforce) add('session', 'SKIPPED', 'session enforcement is switched off in config');
-  else if (session.open) add('session', 'PASS', 'inside the NSE session');
-  else add('session', 'DEFER', session.reason || 'outside the NSE session');
+  if (!gates.session.enforce) {
+    add('session', 'SKIPPED', 'session enforcement is switched off in config', { bypassed: true });
+  } else if (session.open) {
+    add('session', 'PASS', 'inside the NSE session');
+  } else {
+    add('session', 'DEFER', session.reason || 'outside the NSE session');
+  }
 
   // 4. Freshness. A plan is a statement about right now; an old one is not tradeable.
   const asOf = new Date((candidate && (candidate.as_of || candidate.created_at)) || 0).getTime();
@@ -230,7 +238,7 @@ function evaluateRisk({ candidate, context = {}, config, now = Date.now() }) {
   // 6. Liquidity. A contract-level spread check needs a bid/ask feed this harness does not have
   //    yet, so the plan's own liquidity verdict stands in and the note records what is missing.
   if (!gates.liquidityRequired) {
-    add('liquidity', 'SKIPPED', 'liquidity enforcement is switched off in config');
+    add('liquidity', 'SKIPPED', 'liquidity enforcement is switched off in config', { bypassed: true });
   } else if (candidate && candidate.liquidity_ok === true) {
     add('liquidity', 'PASS', 'plan liquidity floor met (spread not yet measurable: no book feed)');
   } else {
@@ -302,6 +310,7 @@ function evaluateRisk({ candidate, context = {}, config, now = Date.now() }) {
 
   const failures = checks.filter((check) => check.status === 'FAIL');
   const deferred = checks.filter((check) => check.status === 'DEFER');
+  const bypassed = checks.filter((check) => check.bypassed).map((check) => check.gate);
   const decision = failures.length ? 'REJECTED' : (deferred.length ? 'DEFERRED' : 'APPROVED');
   const reasons = decision === 'REJECTED'
     ? failures.map((check) => `${check.gate}: ${check.detail}`)
@@ -309,12 +318,20 @@ function evaluateRisk({ candidate, context = {}, config, now = Date.now() }) {
       ? deferred.map((check) => `${check.gate}: ${check.detail}`)
       : ['every risk gate passed'];
 
+  // An approval that rested on a control disabled in config must not read as an ordinary pass, so
+  // the bypassed gates are named. This is precisely the "how was this approved after hours?"
+  // question, answered by the stored row rather than by an investigation.
+  if (decision === 'APPROVED' && bypassed.length) {
+    reasons.push(`approved with controls switched off in config: ${bypassed.join(', ')}`);
+  }
+
   return {
     decision,
     approved: decision === 'APPROVED',
     checks,
     failures: failures.map((check) => check.gate),
     deferred: deferred.map((check) => check.gate),
+    bypassed,
     reasons,
     configVersion: config.version,
   };
