@@ -45,8 +45,8 @@ function makeTotp(secret, at = Date.now()) {
 function classifyPriceOi(priceChange, oiChange) {
   if (priceChange == null || oiChange == null) return 'FIRST SAMPLE';
   if (priceChange === 0 && oiChange === 0) return 'NO CHANGE';
-  if (oiChange === 0) return 'PRICE MOVED Â· OI FLAT';
-  if (priceChange === 0) return 'OI CHANGED Â· PRICE FLAT';
+  if (oiChange === 0) return 'PRICE MOVED - OI FLAT';
+  if (priceChange === 0) return 'OI CHANGED - PRICE FLAT';
   if (oiChange > 0) return priceChange > 0 ? 'LONG BUILDUP' : 'SHORT BUILDUP';
   return priceChange > 0 ? 'SHORT COVERING' : 'LONG UNWINDING';
 }
@@ -61,7 +61,7 @@ function networkIdentity() {
 
 async function publicIp() {
   const response = await fetch('https://api.ipify.org', { signal: AbortSignal.timeout(5000) });
-  if (!response.ok) throw new Error('Unable to determine this computerâ€™s public IP for SmartAPI login.');
+  if (!response.ok) throw new Error("Unable to determine this computer's public IP for SmartAPI login.");
   const ip = (await response.text()).trim();
   if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) throw new Error('Public IP lookup returned an invalid address.');
   return ip;
@@ -123,12 +123,12 @@ class AngelMarketFeed {
   }
 
   status() {
-    if (!this.configured()) return { state: 'NOT_CONFIGURED', detail: 'Add Angel One SmartAPI credentials once in the hosting providerâ€™s protected environment variables.' };
+    if (!this.configured()) return { state: 'NOT_CONFIGURED', detail: "Add Angel One SmartAPI credentials once in the hosting provider's protected environment variables." };
     if (this.lastError) return { state: 'ERROR', detail: this.lastError, lastTickAt: this.lastTickAt };
     if (this.stopped && !this.socket) return { state: 'DISCONNECTED', detail: 'Read-only provider is not connected.' };
     if (this.lastTickAt && Date.now() - Date.parse(this.lastTickAt) > 45000) return { state: 'STALE', detail: 'No Angel One index tick received in the last 45 seconds.', lastTickAt: this.lastTickAt };
-    if (this.socket?.readyState === WebSocket.OPEN && this.lastTickAt) return { state: 'LIVE', detail: 'Angel One WebSocket connected Â· index ticks received.', lastTickAt: this.lastTickAt };
-    if (this.socket?.readyState === WebSocket.OPEN) return { state: 'CONNECTING', detail: 'Socket open Â· waiting for first market tick.' };
+    if (this.socket?.readyState === WebSocket.OPEN && this.lastTickAt) return { state: 'LIVE', detail: 'Angel One WebSocket connected - index ticks received.', lastTickAt: this.lastTickAt };
+    if (this.socket?.readyState === WebSocket.OPEN) return { state: 'CONNECTING', detail: 'Socket open - waiting for first market tick.' };
     return { state: 'CONNECTING', detail: 'Authenticating and resolving index instruments.' };
   }
 
@@ -159,7 +159,7 @@ class AngelMarketFeed {
     try {
       await this.login();
       const masterResponse = await fetch(SCRIP_MASTER, { signal: AbortSignal.timeout(20000) });
-      if (!masterResponse.ok) throw new Error('Could not download Angel Oneâ€™s instrument master.');
+      if (!masterResponse.ok) throw new Error("Could not download Angel One's instrument master.");
       this.instruments = await masterResponse.json();
       this.contracts = resolveIndexTokens(this.instruments);
       await this.seedIndexCloses();

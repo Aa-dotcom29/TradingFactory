@@ -14,6 +14,7 @@ const rss = require('../sources/rss');
 const nse = require('../sources/nse');
 const yahoo = require('../sources/yahoo');
 const { AngelClient, configured: angelConfigured } = require('../sources/angel-client');
+const { toQuotePayload } = require('../sources/angel-quote');
 const { normalizeUniverseSymbol } = require('../bias');
 const { dedupeHash } = require('../normalize');
 
@@ -116,16 +117,7 @@ class IngestWorker {
       const known = tokens.find((t) => t.token === token);
       return {
         symbol: known ? known.name : (q.tradingSymbol || token),
-        payload: {
-          ltp: Number(q.ltp) || null,
-          open: Number(q.open) || null,
-          high: Number(q.high) || null,
-          low: Number(q.low) || null,
-          close: Number(q.close) || null,
-          openInterest: Number(q.opnInterest) || null,
-          volume: Number(q.tradeVolume) || null,
-          exchange: q.exchange || 'NSE',
-        },
+        payload: toQuotePayload(q),
       };
     });
     await this.persistQuotes(rows, {

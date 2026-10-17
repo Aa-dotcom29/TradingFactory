@@ -47,6 +47,7 @@ harness/
 
 ```bash
 npm run harness:selfcheck     # validate wiring (no credentials needed)
+npm run harness:angel-check   # validate Angel One credentials (see docs/angel-one-onboarding.md)
 npm run harness:test          # unit tests
 npm run harness:schema        # apply schema.sql to DATABASE_URL
 npm run harness:once          # run a single ingestion cycle

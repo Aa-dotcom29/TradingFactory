@@ -11,6 +11,7 @@ const { TOPICS } = require('./topics');
 const { toNewsItem, dedupeHash, resolveEntities, scoreSentiment, classifySeverity } = require('./normalize');
 const { aggregateNewsEntities, computeFlowFeatures } = require('./intel');
 const { combineVerdict, newsSignal, flowSignal, priceSignal, resolveConfig } = require('./bias');
+const { toQuotePayload } = require('./sources/angel-quote');
 const {
   buildPlan, computeStage, resolveSignalConfig, DEFAULT_SIGNAL_CONFIG,
 } = require('./signals');
@@ -263,6 +264,17 @@ async function pureFunctionChecks() {
   record(
     'slice 5.5 price signal reads the fallback quote',
     priceSignal({ ltp: yahooQuote.ltp, close: yahooQuote.close, high: yahooQuote.high, low: yahooQuote.low }, biasConfig).available === true,
+  );
+
+  const angelPayload = toQuotePayload({
+    ltp: 568.2, open: 567.4, high: 569.35, low: 566.1, close: 567.4, tradeVolume: 3556150,
+    opnInterest: 12, exchange: 'NSE', exchFeedTime: '21-Jun-2023 10:46:10', exchTradeTime: '21-Jun-2023 10:46:09',
+  });
+  record(
+    'angel quote mapping stamps the exchange feed time',
+    angelPayload.ltp === 568.2 && angelPayload.close === 567.4 && angelPayload.openInterest === 12
+      && angelPayload.quoteTime === '2023-06-21T05:16:10.000Z',
+    `ltp=${angelPayload.ltp} openInterest=${angelPayload.openInterest} quoteTime=${angelPayload.quoteTime}`,
   );
 
   const T_Q = Date.parse('2026-10-14T04:00:00Z'); // Wednesday 09:30 IST

@@ -13,6 +13,7 @@
     "harness:selfcheck": "node harness/src/selfcheck.js",
     "harness:schema": "node harness/scripts/apply-schema.js",
     "harness:config": "node harness/scripts/approve-config.js",
+    "harness:angel-check": "node harness/scripts/angel-check.js",
     "harness:test": "node --test \"harness/test/*.test.js\"",
     "web:install": "npm --prefix web install",
     "web:dev": "npm --prefix web run dev",
