@@ -36,6 +36,7 @@ harness/
   src/sources/rss.js       dependency-free RSS/Atom reader
   src/sources/nse.js       cookie-primed OI spurts + option chain
   src/sources/angel-client.js  batched quotes + option greeks
+  src/sources/angel-quote.js   pure Angel FULL-quote -> quote.v1 mapping
   src/workers/w0-ingest.js     ingestion worker
   src/workers/w8-supervisor.js health / queue / freshness watcher
   src/run.js               entrypoint (--once, --dry, --role=)
@@ -53,7 +54,14 @@ npm run harness:schema        # apply schema.sql to DATABASE_URL
 npm run harness:once          # run a single ingestion cycle
 npm run harness               # run continuously (W0 + W8)
 npm run harness:daily         # single cycle, dry (no network/DB)
+npm run harness:reset-ledger  # clear the signal ledger before go-live (see docs/go-live-checklist.md)
 ```
+
+## Going live
+
+The switch from shadow to live publishing, and everything that must happen first (credentials,
+preflight, a clean ledger, auth hardening), is sequenced in
+[`docs/go-live-checklist.md`](../docs/go-live-checklist.md).
 
 ## Running on a free always-on host
 

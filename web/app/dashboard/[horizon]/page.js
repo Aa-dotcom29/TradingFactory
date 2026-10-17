@@ -5,6 +5,7 @@ import {
   getOutcomes, getOutcomeStats, getOpenPositions,
 } from '@/lib/queries';
 import { horizonByKey } from '@/lib/horizons';
+import { publishModeFor } from '@/lib/publish';
 import StatusBanner from '@/components/StatusBanner';
 import SignalList from '@/components/SignalList';
 import SignalStages from '@/components/SignalStages';
@@ -46,7 +47,7 @@ export default async function HorizonPage({ params }) {
     getOpenPositions(horizon.key, 8),
   ]);
 
-  const live = String(process.env.PUBLISH_MODE || 'shadow').toLowerCase() === 'live';
+  const live = publishModeFor(horizon.key) === 'live';
 
   return (
     <div className="stack">

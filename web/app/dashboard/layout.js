@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/auth';
 import { databaseConfigured } from '@/lib/db';
+import { publishSummary } from '@/lib/publish';
 import NavTabs from '@/components/NavTabs';
 import LogoutButton from '@/components/LogoutButton';
 import RailStatus from '@/components/RailStatus';
@@ -14,7 +15,7 @@ export default async function DashboardLayout({ children }) {
   const user = await getCurrentUser();
   if (!user) redirect('/login');
 
-  const mode = process.env.PUBLISH_MODE || 'shadow';
+  const mode = publishSummary();
 
   return (
     <>

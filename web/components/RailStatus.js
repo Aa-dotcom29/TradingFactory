@@ -51,6 +51,7 @@ export default function RailStatus({ mode = 'shadow' }) {
   })() : '--:--:--';
 
   const shadow = String(mode).toLowerCase() !== 'live';
+  const mixed = String(mode).toLowerCase() === 'mixed';
 
   return (
     <>
@@ -65,12 +66,14 @@ export default function RailStatus({ mode = 'shadow' }) {
 
       <span
         className={`chip ${shadow ? 'caution' : 'live'}`}
-        title={shadow
-          ? 'Signals are written and logged but nothing is delivered'
-          : 'Signals are delivered to the household channel'}
+        title={mixed
+          ? 'Some horizons are delivering; the rest only write the ledger'
+          : shadow
+            ? 'Signals are written and logged but nothing is delivered'
+            : 'Signals are delivered to the household channel'}
       >
         <i className="lamp" />
-        {shadow ? 'shadow delivery' : 'live delivery'}
+        {mixed ? 'mixed delivery' : (shadow ? 'shadow delivery' : 'live delivery')}
       </span>
     </>
   );

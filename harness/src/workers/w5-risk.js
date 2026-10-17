@@ -28,6 +28,7 @@ const {
   evaluateRisk,
   summariseExposure,
   summariseOutcomes,
+  istDayStart,
 } = require('../risk');
 
 const log = require('../logger').child({ module: 'w5' });
@@ -144,10 +145,13 @@ class RiskWorker {
         order by evaluated_at desc
         limit 10
       `,
+      // The daily-loss window is the Indian trading day, not the UTC day: a UTC boundary lands at
+      // 05:30 IST, mid-morning, which would both forget an overnight loss and split one trading day
+      // across two buckets.
       sql`
         select count(*)::int as n, coalesce(sum(pnl_pct), 0) as pnl
         from outcomes
-        where evaluated_at >= date_trunc('day', now())
+        where evaluated_at >= ${istDayStart(now)}::timestamptz
       `,
       sql`
         select max(evaluated_at) as last_loss_at

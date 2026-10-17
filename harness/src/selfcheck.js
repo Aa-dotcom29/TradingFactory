@@ -12,6 +12,7 @@ const { toNewsItem, dedupeHash, resolveEntities, scoreSentiment, classifySeverit
 const { aggregateNewsEntities, computeFlowFeatures } = require('./intel');
 const { combineVerdict, newsSignal, flowSignal, priceSignal, resolveConfig } = require('./bias');
 const { toQuotePayload } = require('./sources/angel-quote');
+const { resolvePublishMode } = require('./publish-mode');
 const {
   buildPlan, computeStage, resolveSignalConfig, DEFAULT_SIGNAL_CONFIG,
 } = require('./signals');
@@ -275,6 +276,15 @@ async function pureFunctionChecks() {
     angelPayload.ltp === 568.2 && angelPayload.close === 567.4 && angelPayload.openInterest === 12
       && angelPayload.quoteTime === '2023-06-21T05:16:10.000Z',
     `ltp=${angelPayload.ltp} openInterest=${angelPayload.openInterest} quoteTime=${angelPayload.quoteTime}`,
+  );
+
+  // Publishing is switchable per horizon, which is what allows Intraday to be turned on last.
+  const publishEnv = { PUBLISH_MODE: 'shadow', PUBLISH_MODE_SWING: 'live' };
+  record(
+    'publish mode resolves per horizon, Intraday last',
+    resolvePublishMode('SWING', publishEnv) === 'live'
+      && resolvePublishMode('INTRADAY', publishEnv) === 'shadow'
+      && resolvePublishMode('POSITIONAL', publishEnv) === 'shadow',
   );
 
   const T_Q = Date.parse('2026-10-14T04:00:00Z'); // Wednesday 09:30 IST

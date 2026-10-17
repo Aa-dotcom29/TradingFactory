@@ -9,6 +9,7 @@ const {
   horizonValue,
   marketSession,
   istClock,
+  istDayStart,
   summariseExposure,
   summariseOutcomes,
   lossStreak,
@@ -101,6 +102,15 @@ test('marketSession keeps the weekend closed and names it', () => {
   const session = marketSession(SAT_1030_IST, config.gates.session);
   assert.equal(session.open, false);
   assert.equal(session.reason.includes('weekend'), true);
+});
+
+test('istDayStart is IST midnight, so the daily-loss window is the trading day', () => {
+  // 2026-10-17 07:30 IST == 02:00 UTC -> the day began at 2026-10-16T18:30:00Z.
+  assert.equal(istDayStart(Date.parse('2026-10-17T02:00:00Z')), '2026-10-16T18:30:00.000Z');
+  // 2026-10-17 01:30 IST == 2026-10-16T20:00:00Z -> still that same trading day, not the UTC one.
+  assert.equal(istDayStart(Date.parse('2026-10-16T20:00:00Z')), '2026-10-16T18:30:00.000Z');
+  // 2026-10-16 23:30 IST == 2026-10-16T18:00:00Z -> the previous trading day.
+  assert.equal(istDayStart(Date.parse('2026-10-16T18:00:00Z')), '2026-10-15T18:30:00.000Z');
 });
 
 test('lossStreak reports null for no history and counts back to the first win', () => {

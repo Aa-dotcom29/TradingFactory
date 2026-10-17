@@ -18,6 +18,7 @@ const db = require('../db');
 const queue = require('../queue');
 const { TOPICS } = require('../topics');
 const { formatSignal, TelegramClient } = require('../telegram');
+const { resolvePublishMode, normalisePublishMode } = require('../publish-mode');
 
 const log = require('../logger').child({ module: 'w6' });
 
@@ -32,13 +33,40 @@ class PublishWorker {
     this.leaseSeconds = options.leaseSeconds || 120;
     this.maxOrphans = options.maxOrphans || 50;
     this.dryRun = options.dryRun ?? config.dryRun;
-    this.mode = String(options.mode || config.publish.mode || 'shadow').toLowerCase();
-    this.telegram = options.telegram || new TelegramClient({ mode: this.mode });
+    // A caller may pin a single mode for every horizon (tests, one-off runs). Otherwise the mode is
+    // resolved per horizon, so a horizon can be flipped live without touching the other two.
+    this.modeOverride = options.mode ? normalisePublishMode(options.mode) : null;
+    this.injectedClient = options.telegram && typeof options.telegram.send === 'function'
+      ? options.telegram
+      : null;
+    this.clientOptions = options.telegram && typeof options.telegram.send !== 'function'
+      ? options.telegram
+      : {};
+    this.clients = new Map();
     this.startedAt = new Date().toISOString();
   }
 
   get sql() {
     return db.client();
+  }
+
+  modeFor(horizon) {
+    return this.modeOverride || resolvePublishMode(horizon);
+  }
+
+  // One client per resolved mode, so a live horizon and a shadow horizon never share a client that
+  // would silently apply the wrong mode to one of them.
+  clientFor(horizon) {
+    if (this.injectedClient) return this.injectedClient;
+    const mode = this.modeFor(horizon);
+    if (!this.clients.has(mode)) {
+      this.clients.set(mode, new TelegramClient({ ...this.clientOptions, mode }));
+    }
+    return this.clients.get(mode);
+  }
+
+  modeSummary() {
+    return ['INTRADAY', 'SWING', 'POSITIONAL'].map((h) => `${h}=${this.modeFor(h)}`).join(' ');
   }
 
   async markSource(source, status, detail) {
@@ -89,7 +117,8 @@ class PublishWorker {
   // unique key is (strategy, setup_key), so a replay finds the existing row instead of a second.
   async publishCandidate(candidate, riskConfigVersion = null) {
     const sql = this.sql;
-    const mode = this.telegram.shadow ? 'shadow' : 'live';
+    const client = this.clientFor(candidate.horizon);
+    const mode = client.shadow ? 'shadow' : 'live';
     const riskVersion = riskConfigVersion || await this.latestRiskVersion(candidate.id);
 
     let signalId = null;
@@ -156,7 +185,7 @@ class PublishWorker {
     if (settled.length) return { status: 'already-delivered', state: settled[0].new_state, signalId };
 
     const text = formatSignal(candidate, { mode });
-    const result = await this.telegram.send(text);
+    const result = await client.send(text);
     const state = result.delivered ? 'DELIVERED' : (result.skipped === 'shadow' ? 'SHADOWED' : 'DELIVERY_FAILED');
     const reason = result.delivered
       ? 'delivered to telegram'
@@ -300,14 +329,14 @@ class PublishWorker {
       }
     }
 
-    const mode = this.telegram.shadow ? 'shadow' : 'live';
+    const mode = this.modeSummary();
     if (summary.failed) {
-      await this.markSource('publisher', 'WARNING', `${summary.failed} publish failure(s) (mode ${mode})`);
+      await this.markSource('publisher', 'WARNING', `${summary.failed} publish failure(s) (${mode})`);
     } else {
       await this.markSource(
         'publisher',
         'HEALTHY',
-        `${summary.published} published, ${summary.ignored || 0} ignored (mode ${mode})`,
+        `${summary.published} published, ${summary.ignored || 0} ignored (${mode})`,
       );
     }
     return summary;

@@ -5,6 +5,7 @@
 
 const fsSync = require('node:fs');
 const path = require('node:path');
+const { normalisePublishMode, resolvePublishMode } = require('./publish-mode');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 
@@ -143,7 +144,11 @@ const config = {
   },
 
   publish: {
-    mode: (process.env.PUBLISH_MODE || 'shadow').trim().toLowerCase(), // shadow | live
+    // Global default: shadow | live. Only `live` sends; anything else is shadow.
+    mode: normalisePublishMode(process.env.PUBLISH_MODE),
+    // Per-horizon so publishing can be enabled one horizon at a time (PUBLISH_MODE_SWING=live, ...),
+    // Intraday last. A per-horizon value wins over the global one.
+    modeFor: (horizon) => resolvePublishMode(horizon),
   },
 
   llm: {

@@ -13,6 +13,7 @@ import HealthTable from '@/components/HealthTable';
 import PipelineStrip from '@/components/PipelineStrip';
 import ConsensusMeter from '@/components/ConsensusMeter';
 import StatusBanner from '@/components/StatusBanner';
+import { publishSummary } from '@/lib/publish';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,7 +42,8 @@ export default async function OverviewPage() {
   const counts = health.counts || {};
   const biasCounts = bias.counts || {};
   const stageCounts = lifecycle.counts || {};
-  const mode = process.env.PUBLISH_MODE || 'shadow';
+  const mode = publishSummary();
+  const mixed = mode === 'mixed';
 
   const biasTotal = (biasCounts.BULLISH || 0) + (biasCounts.BEARISH || 0) + (biasCounts.NEUTRAL || 0);
   const sources = health.sources || [];
@@ -61,7 +63,7 @@ export default async function OverviewPage() {
       name: 'Publish',
       value: counts.signals_shadow_24h ?? 0,
       unit: '24h',
-      note: String(mode).toLowerCase() === 'live' ? 'delivered to Telegram' : 'shadow only, nothing sent',
+      note: live ? 'delivered to Telegram' : (mixed ? 'mixed: some horizons live' : 'shadow only, nothing sent'),
     },
     {
       id: 'W7',
@@ -105,7 +107,9 @@ export default async function OverviewPage() {
           note={
             live
               ? 'Approved signals are being delivered to the household channel. Execution stays manual: this engine never places an order.'
-              : 'Signals are scored, risk-gated and written to the ledger, but nothing is sent. Flip PUBLISH_MODE per horizon when you are ready to go live.'
+              : mixed
+                ? 'Some horizons are delivering to the household channel; the rest only write the ledger in shadow. Execution stays manual.'
+                : 'Signals are scored, risk-gated and written to the ledger, but nothing is sent. Flip PUBLISH_MODE per horizon when you are ready to go live.'
           }
         />
       )}

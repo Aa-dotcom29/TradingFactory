@@ -24,7 +24,7 @@
 //               proposal stays pending and is re-evaluated on the next tick.
 
 const { HORIZONS } = require('./topics');
-const { DEFAULT_SESSION, istClock, marketSession } = require('./session');
+const { DEFAULT_SESSION, istClock, marketSession, istDayStart } = require('./session');
 
 const CHECK_STATES = ['PASS', 'FAIL', 'DEFER', 'SKIPPED'];
 const DECISIONS = ['APPROVED', 'REJECTED', 'DEFERRED'];
@@ -345,6 +345,7 @@ module.exports = {
   horizonValue,
   istClock,
   marketSession,
+  istDayStart,
   summariseExposure,
   summariseOutcomes,
   lossStreak,

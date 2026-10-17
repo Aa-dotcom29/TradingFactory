@@ -44,10 +44,20 @@ function marketSession(now = Date.now(), session = DEFAULT_SESSION) {
 const isMarketOpen = (now = Date.now(), session = DEFAULT_SESSION) =>
   marketSession(now, session).open;
 
+// Midnight IST for the calendar day `now` falls in, as an ISO string. This is the boundary the
+// daily-loss control resets on: the Indian trading day, not the UTC day (which would roll over at
+// 05:30 IST, part-way through the morning, wiping a losing day's tally before the market even opens
+// and carrying last night's after-hours losses into the new one).
+function istDayStart(now = Date.now()) {
+  const clock = istClock(now);
+  return new Date(Date.parse(`${clock.date}T00:00:00.000+05:30`)).toISOString();
+}
+
 module.exports = {
   DEFAULT_SESSION,
   istClock,
   hhmm,
   marketSession,
   isMarketOpen,
+  istDayStart,
 };

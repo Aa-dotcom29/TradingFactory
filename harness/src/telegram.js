@@ -12,6 +12,7 @@
 // UI cannot get in through the alert channel either.
 
 const config = require('./config');
+const { normalisePublishMode } = require('./publish-mode');
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -93,7 +94,9 @@ class TelegramClient {
     this.token = options.token !== undefined ? options.token : config.telegram.botToken;
     this.chatId = options.chatId !== undefined ? options.chatId : config.telegram.chatId;
     this.apiRoot = String(options.apiRoot || config.telegram.apiRoot).replace(/\/+$/, '');
-    this.mode = String(options.mode || config.publish.mode || 'shadow').toLowerCase();
+    this.mode = normalisePublishMode(options.mode !== undefined && options.mode !== null
+      ? options.mode
+      : config.publish.mode);
     this.timeoutMs = options.timeoutMs || config.telegram.timeoutMs;
     this.fetchImpl = options.fetchImpl || (typeof fetch === 'function' ? fetch : null);
   }
