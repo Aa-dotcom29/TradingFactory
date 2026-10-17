@@ -130,7 +130,10 @@ async function main() {
       const greeks = await client.optionGreeks('NIFTY', expiry);
       pass('option greeks', `${greeks.length} contract(s) for ${expiry}`);
     } catch (error) {
-      info('option greeks', `unavailable for ${expiry}: ${error.message}`);
+      // Not a FAIL: greeks are only used for context, and Angel commonly answers "No Data
+      // Available" outside market hours. Surface the reason instead of hiding it.
+      const hint = /no data available/i.test(error.message) ? ' (Angel serves greeks only around market hours)' : '';
+      info('option greeks', `unavailable for ${expiry}: ${error.message}${hint}`);
     }
   }
 

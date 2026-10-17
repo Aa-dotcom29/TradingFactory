@@ -62,4 +62,22 @@ function toQuotePayload(quote) {
   };
 }
 
-module.exports = { parseAngelTime, toQuotePayload };
+// The optionGreek endpoint is the one Angel route that does not take ISO: its documented request
+// body is { "name": "TCS", "expirydate": "25JAN2024" }. The instrument master hands us ISO
+// (2026-10-19), so convert here rather than making every caller remember the quirk. An expiry that
+// is already DDMMMYYYY is normalised to upper case and passed through.
+function toAngelExpiry(value) {
+  if (!value) return null;
+  const text = String(value).trim().toUpperCase();
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    const month = Object.keys(MONTHS)[Number(iso[2]) - 1];
+    if (!month) return null;
+    return `${iso[3]}${month}${iso[1]}`;
+  }
+  const compact = text.match(/^(\d{2})([A-Z]{3})(\d{4})$/);
+  if (compact && MONTHS[compact[2]] !== undefined) return text;
+  return null;
+}
+
+module.exports = { parseAngelTime, toQuotePayload, toAngelExpiry };

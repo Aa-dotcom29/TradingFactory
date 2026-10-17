@@ -11,6 +11,7 @@ const os = require('node:os');
 const config = require('../config');
 const log = require('../logger').child({ module: 'angel' });
 const { makeTotp } = require('../../../angel-feed.js');
+const { toAngelExpiry } = require('./angel-quote');
 
 const INDEX_MATCHERS = [
   { name: 'NIFTY 50', match: ['NIFTY 50'], exchangeType: 1 },
@@ -54,7 +55,8 @@ class AngelClient {
   constructor() {
     this.accessToken = '';
     this.feedToken = '';
-    this.publicIp = '';
+    // Renamed from publicIp so it does not shadow the publicIp() method below.
+    this.resolvedPublicIp = '';
     this.instruments = null;
     this.lastError = null;
     this.limiter = new RateLimiter(config.angel.maxPerSecond);
@@ -69,7 +71,7 @@ class AngelClient {
       'X-SourceID': 'WEB',
       'X-PrivateKey': config.angel.apiKey,
       'X-ClientLocalIP': identity.local,
-      'X-ClientPublicIP': this.publicIp || identity.local,
+      'X-ClientPublicIP': this.resolvedPublicIp || identity.local,
       'X-MACAddress': identity.mac,
     };
   }
@@ -79,15 +81,15 @@ class AngelClient {
   }
 
   async publicIp() {
-    if (this.publicIp) return this.publicIp;
+    if (this.resolvedPublicIp) return this.resolvedPublicIp;
     try {
       const response = await fetch('https://api.ipify.org', { signal: AbortSignal.timeout(5000) });
       const ip = (await response.text()).trim();
-      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) this.publicIp = ip;
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) this.resolvedPublicIp = ip;
     } catch (error) {
       log.warn('public IP lookup failed; falling back to local IP', { error: error.message });
     }
-    return this.publicIp;
+    return this.resolvedPublicIp;
   }
 
   async request(url, options) {
@@ -171,10 +173,13 @@ class AngelClient {
 
   async optionGreeks(name, expiryDate) {
     if (!this.accessToken) await this.login();
+    // The endpoint rejects ISO with "Invalid expiry date"; it wants DDMMMYYYY.
+    const expiry = toAngelExpiry(expiryDate);
+    if (!expiry) throw new Error(`Could not read an option expiry from "${expiryDate}"`);
     const body = await this.request(`${config.angel.apiRoot}/rest/secure/angelbroking/marketData/v1/optionGreek`, {
       method: 'POST',
       headers: this.authHeaders(),
-      body: JSON.stringify({ name, expirydate: expiryDate }),
+      body: JSON.stringify({ name, expirydate: expiry }),
     });
     return body.data || [];
   }

@@ -34,7 +34,8 @@ tells you whether it worked, and it never prints a secret.
    ```
    It checks, in order: values present -> login + TOTP -> instrument master -> a FULL quote (and
    whether the exchange timestamp the bias meter ages on is present) -> option greeks. Each step
-   prints PASS/FAIL, so a failure names its cause.
+   prints PASS/FAIL, so a failure names its cause. The greeks step is best effort: Angel often
+   answers "No Data Available" outside market hours, which is reported as a note, not a failure.
 6. **Flip the feed on.** With the check passing, run the pipeline normally. W0 will now prefer
    Angel One; `sources_health` shows `angel HEALTHY ... quotes` in place of the Yahoo row.
 
@@ -64,6 +65,12 @@ limit while polling the index universe.
 | instrument master FAIL | the scrip-master download was blocked or timed out |
 | quote FAIL "Invalid Token" | the instrument master changed; re-run the check on a later build |
 | quote rows but no timestamp | Angel omitted `exchFeedTime`; the meter falls back to capture time |
+| greeks note "No Data Available" | usually just out of hours; Angel serves greeks around market hours |
+| greeks FAIL "Invalid expiry date" | the expiry was sent as ISO; `optionGreek` wants `DDMMMYYYY` (the client converts) |
+
+Note that `optionGreek` is the one Angel route that does **not** take an ISO date: it wants
+`25JAN2024`-style `DDMMMYYYY`. The instrument master hands the harness ISO, so `optionGreeks` is
+called with ISO and `toAngelExpiry` converts it at the client boundary.
 
 The login session is valid until midnight; the client re-authenticates on demand, so a run that
 straddles midnight simply logs in again.

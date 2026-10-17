@@ -11,7 +11,8 @@ const { TOPICS } = require('./topics');
 const { toNewsItem, dedupeHash, resolveEntities, scoreSentiment, classifySeverity } = require('./normalize');
 const { aggregateNewsEntities, computeFlowFeatures } = require('./intel');
 const { combineVerdict, newsSignal, flowSignal, priceSignal, resolveConfig } = require('./bias');
-const { toQuotePayload } = require('./sources/angel-quote');
+const { toQuotePayload, toAngelExpiry } = require('./sources/angel-quote');
+const { AngelClient } = require('./sources/angel-client');
 const { resolvePublishMode } = require('./publish-mode');
 const {
   buildPlan, computeStage, resolveSignalConfig, DEFAULT_SIGNAL_CONFIG,
@@ -276,6 +277,20 @@ async function pureFunctionChecks() {
     angelPayload.ltp === 568.2 && angelPayload.close === 567.4 && angelPayload.openInterest === 12
       && angelPayload.quoteTime === '2023-06-21T05:16:10.000Z',
     `ltp=${angelPayload.ltp} openInterest=${angelPayload.openInterest} quoteTime=${angelPayload.quoteTime}`,
+  );
+
+  // Guards two bugs the preflight caught on first run: a field shadowing publicIp(), and the
+  // optionGreek endpoint being sent an ISO expiry instead of DDMMMYYYY.
+  const angelClient = new AngelClient();
+  record(
+    'angel client keeps publicIp() callable (not shadowed by a field)',
+    typeof angelClient.publicIp === 'function',
+    `typeof publicIp=${typeof angelClient.publicIp}`,
+  );
+  record(
+    'angel optionGreek expiry is sent as DDMMMYYYY',
+    toAngelExpiry('2026-10-19') === '19OCT2026' && toAngelExpiry('25JAN2024') === '25JAN2024',
+    `iso=${toAngelExpiry('2026-10-19')} compact=${toAngelExpiry('25JAN2024')}`,
   );
 
   // Publishing is switchable per horizon, which is what allows Intraday to be turned on last.
