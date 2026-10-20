@@ -64,6 +64,12 @@ It prompts for the Angel One and Telegram credentials. To avoid typing them, upl
 local `.env` with Cloud Shell's upload button and pass `--env-file <path>`: CRLF is normalised to
 LF, `DATABASE_URL` is cleared and `AUTH_DISABLED` is forced to `false` on the host.
 
+The file to upload is the **repository-root** `.env` - the one containing `ANGEL_CLIENT_ID` and
+`TELEGRAM_BOT_TOKEN`, not `web/.env`, which only configures the local Next.js server. The filename
+is literally `.env` (a dot followed by `env`), not `Local.env`. On Windows the repository root is
+the folder that contains `package.json` and the `harness` and `web` directories. If the upload
+picker will not select a dotfile, copy it to `tf-secrets.env` and pass that path instead.
+
 What it deliberately leaves to you:
 
 - **Register the reserved IP as the SmartAPI primary IP** in the Angel One console. That is an
