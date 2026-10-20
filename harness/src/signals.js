@@ -22,6 +22,8 @@
 // family, versioned, so tuning is a reviewable change rather than a deploy.
 
 const { HORIZONS } = require('./topics');
+const { parseExpiry } = require('./contract');
+const { istClock } = require('./session');
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const num = (value) => {
@@ -108,7 +110,16 @@ function underlyingPrice(flow, quote) {
 // actually surfaced, pick the strike nearest spot; that is the at-the-money contract, which is
 // where liquidity concentrates. If every surfaced strike is far from spot we refuse rather than
 // quietly selling a deep out-of-the-money lottery ticket.
-function selectContract({ direction, spot, flow, config }) {
+//
+// Expired contracts are dropped first, and this is not a nicety. A flow snapshot outlives the
+// session that produced it - the bias meter deliberately ages flow rather than discarding it - so
+// on the day after an expiry the snapshot still names contracts that can no longer be bought. One
+// of those was selected on 20 October 2026 and priced at 0.05, because 0.05 was the last trade of
+// a dead NIFTY put. The risk gate would have approved it: the levels were correctly ordered, the
+// liquidity floors read the dead contract's own volume and open interest, and nothing in the
+// numbers looked unusual. An expiry that cannot be parsed is treated as expired, because a
+// contract we cannot date is one we cannot promise is alive.
+function selectContract({ direction, spot, flow, config, now = Date.now() }) {
   const optionType = direction === 'BULLISH' ? 'CE' : 'PE';
   const directional = contractList(flow).filter((c) => (
     c.kind === 'OPTION' && c.optionType === optionType && num(c.strike) !== null
@@ -117,10 +128,27 @@ function selectContract({ direction, spot, flow, config }) {
     return { ok: false, optionType, reason: `no ${optionType} strike in the latest flow snapshot` };
   }
 
+  const today = istClock(now).date;
+  const live = directional.filter((c) => {
+    const expiry = parseExpiry(c.expiry);
+    return expiry !== null && expiry >= today;
+  });
+  if (!live.length) {
+    const seen = [...new Set(directional.map((c) => String(c.expiry || '(none)')))]
+      .sort()
+      .join(', ');
+    return {
+      ok: false,
+      optionType,
+      reason: `every ${optionType} strike in the latest flow snapshot has expired `
+        + `(expiry ${seen}, today ${today})`,
+    };
+  }
+
   const band = Math.abs(spot) * config.plan.strikeSearchPct;
-  const near = directional.filter((c) => Math.abs(c.strike - spot) <= band);
+  const near = live.filter((c) => Math.abs(c.strike - spot) <= band);
   if (!near.length) {
-    const nearest = directional.reduce((best, c) => (
+    const nearest = live.reduce((best, c) => (
       Math.abs(c.strike - spot) < Math.abs(best.strike - spot) ? c : best
     ));
     return {
@@ -135,7 +163,13 @@ function selectContract({ direction, spot, flow, config }) {
     || (num(b.volume) || 0) - (num(a.volume) || 0)
     || String(a.expiry || '').localeCompare(String(b.expiry || '')));
 
-  return { ok: true, optionType, contract: near[0], considered: near.length };
+  return {
+    ok: true,
+    optionType,
+    contract: near[0],
+    considered: near.length,
+    droppedExpired: directional.length - live.length,
+  };
 }
 
 function liquidityCheck({ contract, flow, config }) {
@@ -171,7 +205,7 @@ function instrumentName(symbol, contract, optionType) {
 // Returns { ok, plan, reason }. `ok` means "there is a concrete, liquid trade right now". A plan
 // can still be returned when `ok` is false (for example a formed but illiquid option plan) so
 // the dashboard can show the setup that is forming.
-function buildPlan({ symbol, horizon, direction, flow, quote, config }) {
+function buildPlan({ symbol, horizon, direction, flow, quote, config, now = Date.now() }) {
   const anchor = underlyingPrice(flow, quote);
   if (anchor.price === null) {
     return { ok: false, plan: null, reason: 'no underlying price (no broker quote and no NSE underlying value)' };
@@ -181,7 +215,7 @@ function buildPlan({ symbol, horizon, direction, flow, quote, config }) {
   const reward = horizonValue(config.plan.rewardMultiple, horizon, 2);
   const underlyingStopPct = horizonValue(config.plan.underlyingStopPct, horizon, 0.02);
   const directionSign = direction === 'BULLISH' ? 1 : -1;
-  const pick = selectContract({ direction, spot, flow, config });
+  const pick = selectContract({ direction, spot, flow, config, now });
 
   if (pick.ok) {
     const contract = pick.contract;
@@ -202,6 +236,11 @@ function buildPlan({ symbol, horizon, direction, flow, quote, config }) {
       symbol,
       horizon,
       direction,
+      // The position, as distinct from the view. A bearish view buys a put, and buying a put is a
+      // long position: it profits when the premium rises. The evaluator orders the levels by this
+      // field, not by `direction`, and reading the two as the same thing made every option plan
+      // unevaluable - it demanded a short's level order from a long's numbers, forever.
+      position: 'LONG',
       spot: round(spot, 2),
       spotSource: anchor.source,
       instrument: instrumentName(symbol, contract, pick.optionType),
@@ -216,7 +255,8 @@ function buildPlan({ symbol, horizon, direction, flow, quote, config }) {
       liquidity,
       reasons: [
         `ATM ${pick.optionType} ${contract.strike}${contract.expiry ? ` ${contract.expiry}` : ''} `
-          + `from ${pick.considered || 1} surfaced ${pick.optionType} strike(s)`,
+          + `from ${pick.considered || 1} surfaced ${pick.optionType} strike(s)`
+          + (pick.droppedExpired ? `, ${pick.droppedExpired} expired ignored` : ''),
         `spot ${round(spot, 2)} (${anchor.source})`,
       ],
     };
@@ -241,6 +281,9 @@ function buildPlan({ symbol, horizon, direction, flow, quote, config }) {
     symbol,
     horizon,
     direction,
+    // A level plan on the underlying really is short when the view is bearish, so here the side
+    // does follow the view - unlike an option plan, which is always long premium.
+    position: directionSign === 1 ? 'LONG' : 'SHORT',
     spot: round(spot, 2),
     spotSource: anchor.source,
     instrument: `${symbol} spot/futures`,
@@ -272,6 +315,7 @@ function planSignature(plan) {
   if (!plan) return 'none';
   return [
     plan.kind,
+    plan.position || 'X',
     plan.instrument,
     plan.entry,
     plan.stop,

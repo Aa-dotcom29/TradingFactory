@@ -60,3 +60,13 @@ test('during a live session the staleness threshold still applies', () => {
 test('a live session with nothing stored yet reports NO_DATA rather than stale', () => {
   assert.equal(feedState(null, { now: LIVE_SESSION }).state, 'NO_DATA');
 });
+
+test('a holiday is CLOSED, not STALE, on a day the market never opened', () => {
+  // 20 October 2026, Dussehra - a Tuesday, so the weekend rule cannot close it. Without the holiday
+  // list the feed went STALE at 10:39 and stayed there all day: a correct alarm for the wrong
+  // reason, which is exactly the sort of thing a household learns to ignore.
+  const dussehra = Date.parse('2026-10-20T05:10:00Z');
+  const state = feedState('2026-10-20T03:37:00Z', { now: dussehra, staleAfterMs: 1000 });
+  assert.equal(state.state, 'CLOSED');
+  assert.match(state.reason, /holiday/);
+});

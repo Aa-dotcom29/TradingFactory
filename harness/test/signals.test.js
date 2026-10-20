@@ -8,9 +8,9 @@ const {
   resolveSignalConfig,
   horizonValue,
   underlyingPrice,
-  selectContract,
+  selectContract: selectContractRaw,
   liquidityCheck,
-  buildPlan,
+  buildPlan: buildPlanRaw,
   planSignature,
   computeStage,
   isStageMaterialChange,
@@ -19,6 +19,13 @@ const {
 } = require('../src/signals');
 
 const config = resolveSignalConfig(null);
+
+// The fixtures expire 27 October 2026, and a contract that has already expired is refused outright,
+// so every call is pinned to a fixed instant on the Wednesday before it. Leaving that to the wall
+// clock would make this suite pass in October and fail in November.
+const NOW = Date.parse('2026-10-14T05:00:00Z');
+const selectContract = (options = {}) => selectContractRaw({ now: NOW, ...options });
+const buildPlan = (options = {}) => buildPlanRaw({ now: NOW, ...options });
 
 const CE = { kind: 'OPTION', optionType: 'CE', contract: 'NIFTY-CE-25000', strike: 25000, expiry: '27OCT2026', price: 120, oi: 20000, volume: 5000, oiChange: 1000, read: 'LONG BUILDUP' };
 const PE = { kind: 'OPTION', optionType: 'PE', contract: 'NIFTY-PE-25000', strike: 25000, expiry: '27OCT2026', price: 110, oi: 18000, volume: 4000, oiChange: 800, read: 'SHORT COVERING' };
@@ -96,6 +103,45 @@ test('selectContract refuses when no contract is on the verdict side', () => {
   assert.match(picked.reason, /no PE strike/);
 });
 
+// 20 October 2026 is the day after the 19 October expiry, and the flow snapshot the bias meter is
+// still ageing names only that dead contract. It was selected, priced at the last trade of a dead
+// NIFTY put - 0.05 - and approved: the levels were correctly ordered and the liquidity floors read
+// the dead contract's own volume. This is that day, as a test.
+test('selectContract refuses a contract that has already expired', () => {
+  const flow = { topContracts: [{ ...PE, strike: 25000, expiry: '19OCT2026', price: 0.05 }] };
+  const picked = selectContract({
+    direction: 'BEARISH',
+    spot: 25000,
+    flow,
+    config,
+    now: Date.parse('2026-10-20T05:07:00Z'), // the day after the expiry
+  });
+  assert.equal(picked.ok, false);
+  assert.match(picked.reason, /has expired/);
+  assert.match(picked.reason, /19OCT2026/);
+});
+
+test('selectContract keeps a contract expiring today and drops only the ones behind it', () => {
+  const flow = {
+    topContracts: [
+      { ...CE, strike: 25000, expiry: '13OCT2026' },
+      { ...CE, strike: 25000, expiry: '14OCT2026' },
+      { ...CE, strike: 25000, expiry: '27OCT2026' },
+    ],
+  };
+  const picked = selectContract({ direction: 'BULLISH', spot: 25000, flow, config });
+  assert.equal(picked.ok, true);
+  assert.equal(picked.contract.expiry, '14OCT2026', 'expiring today is still tradeable');
+  assert.equal(picked.droppedExpired, 1);
+});
+
+test('selectContract treats an undateable expiry as expired rather than assuming it is live', () => {
+  const flow = { topContracts: [{ ...CE, strike: 25000, expiry: 'soon' }] };
+  const picked = selectContract({ direction: 'BULLISH', spot: 25000, flow, config });
+  assert.equal(picked.ok, false);
+  assert.match(picked.reason, /has expired/);
+});
+
 test('liquidityCheck reports every floor that failed', () => {
   const thin = liquidityCheck({ contract: { ...CE, oi: 10, volume: 5 }, flow: { optionCount: 1 }, config });
   assert.equal(thin.ok, false);
@@ -165,6 +211,27 @@ test('buildPlan falls back to a level plan when no option contract can be anchor
   assert.equal(bear.plan.target, 24850);
 });
 
+test('buildPlan stamps the side the position is held on, which is not always the view', () => {
+  // A bearish view buys a put, and a bought put is long premium. The evaluator orders the levels
+  // by this field; reading the market view as the side made every option plan unevaluable.
+  const option = buildPlan({
+    symbol: 'NIFTY', horizon: 'INTRADAY', direction: 'BEARISH', flow: FLOW, quote: null, config,
+  });
+  assert.equal(option.plan.kind, 'OPTION');
+  assert.equal(option.plan.optionType, 'PE');
+  assert.equal(option.plan.position, 'LONG');
+  assert.ok(option.plan.target > option.plan.entry && option.plan.entry > option.plan.stop);
+
+  // A level plan on the underlying really is short when the view is bearish.
+  const noOptions = { underlyingPrice: 25000, underlyingVolume: 500000, optionCount: 0, topContracts: [] };
+  const short = buildPlan({
+    symbol: 'NIFTY', horizon: 'INTRADAY', direction: 'BEARISH', flow: noOptions, quote: null, config,
+  });
+  assert.equal(short.plan.kind, 'SPOT');
+  assert.equal(short.plan.position, 'SHORT');
+  assert.ok(short.plan.target < short.plan.entry && short.plan.entry < short.plan.stop);
+});
+
 test('buildPlan honours spotFallback: false', () => {
   const noFallback = resolveSignalConfig({ plan: { spotFallback: false } });
   const flow = { underlyingPrice: 25000, underlyingVolume: 500000, optionCount: 0, topContracts: [] };
@@ -221,6 +288,7 @@ test('planSignature changes when the trade changes', () => {
   const moved = { ...plan, entry: 130, target: 175 };
   assert.equal(planSignature(plan), planSignature(same));
   assert.notEqual(planSignature(plan), planSignature(moved));
+  assert.notEqual(planSignature(plan), planSignature({ ...plan, position: 'SHORT' }));
   assert.equal(planSignature(null), 'none');
 });
 

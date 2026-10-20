@@ -54,6 +54,9 @@ class EvaluateWorker {
     this.proposals = options.proposals ?? true;
     this.configTtlMs = options.configTtlMs || 60000;
     this.startedAt = new Date().toISOString();
+    // signal id -> { reason, passes }, so a standing "cannot evaluate" condition is reported once
+    // instead of on every pass of the loop.
+    this.unevaluable = new Map();
   }
 
   get sql() {
@@ -210,6 +213,9 @@ class EvaluateWorker {
       configVersion,
       priceSource: evaluation.priceSource || null,
       result: evaluation.result,
+      // The side the position was judged on, which is not always the market view: a bought put is
+      // long premium. Recorded so an outcome can be read back without re-deriving it.
+      side: evaluation.side || null,
       unpriced: Boolean(evaluation.unpriced),
       ambiguous: evaluation.ambiguous,
       exitAt: evaluation.exitAt,
@@ -291,6 +297,37 @@ class EvaluateWorker {
     };
   }
 
+  // An unevaluable position is a standing condition, not an event. While the cause persists the
+  // evaluator reaches the same verdict on every pass - and the same warning, every fifteen
+  // seconds, is 5,760 identical lines a day that bury everything else in the log. Each distinct
+  // reason is reported once per signal, with a count of the passes that agreed with it; when the
+  // condition clears, that is reported too, because a position quietly becoming evaluable again is
+  // worth seeing.
+  noteUnevaluable(signalId, reason) {
+    const previous = this.unevaluable.get(signalId);
+    if (previous && previous.reason === reason) {
+      previous.passes += 1;
+      return;
+    }
+    if (previous) {
+      log.warn('position still cannot be evaluated, for a different reason', {
+        signal: signalId, reason, previousReason: previous.reason, passes: previous.passes,
+      });
+    } else {
+      log.warn('position cannot be evaluated', { signal: signalId, reason });
+    }
+    this.unevaluable.set(signalId, { reason, passes: 1 });
+  }
+
+  clearUnevaluable(signalId, status) {
+    const previous = this.unevaluable.get(signalId);
+    if (!previous) return;
+    this.unevaluable.delete(signalId);
+    log.info('position is no longer unevaluable', {
+      signal: signalId, status, reason: previous.reason, passes: previous.passes,
+    });
+  }
+
   // The durable path. Everything the worker actually acts on is read here, not from a message.
   async evaluateOpen(options = {}) {
     const sql = this.sql;
@@ -308,17 +345,20 @@ class EvaluateWorker {
       try {
         const result = await this.evaluateSignal(row, version);
         if (result.status === 'CLOSED') {
+          this.clearUnevaluable(row.id, 'CLOSED');
           summary.closed += 1;
           log.info('position closed', {
             horizon: result.horizon, symbol: result.symbol,
             result: result.result, pnlPct: result.pnlPct,
           });
         } else if (result.status === STATUS.AWAITING_PRICE_SOURCE) {
+          this.clearUnevaluable(row.id, result.status);
           summary.awaiting += 1;
         } else if (result.status === STATUS.UNEVALUABLE) {
           summary.unevaluable += 1;
-          log.warn('position cannot be evaluated', { signal: result.signal, reason: result.reason });
+          this.noteUnevaluable(result.signal, result.reason);
         } else {
+          this.clearUnevaluable(row.id, result.status);
           summary.open += 1;
         }
       } catch (error) {

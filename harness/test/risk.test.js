@@ -104,6 +104,31 @@ test('marketSession keeps the weekend closed and names it', () => {
   assert.equal(session.reason.includes('weekend'), true);
 });
 
+test('marketSession closes on a published holiday and names the date', () => {
+  // 20 October 2026, Dussehra - a Tuesday, so nothing but the holiday list can close it. This is
+  // the day the clock reported a live session, and the pipeline duly aged nothing, built tradeable
+  // plans from the previous session's frozen prices, and approved them.
+  const dussehra = Date.parse('2026-10-20T05:00:00Z'); // Tuesday 10:30 IST
+  const session = marketSession(dussehra, config.gates.session);
+  assert.equal(session.open, false);
+  assert.equal(session.holiday, '2026-10-20');
+  assert.match(session.reason, /holiday/);
+});
+
+test('a holiday list can be replaced wholesale from config without losing the rest of the session', () => {
+  const replaced = resolveRiskConfig({ gates: { session: { holidays: ['2026-10-21'] } } });
+  assert.deepEqual(replaced.gates.session.holidays, ['2026-10-21']);
+  assert.equal(marketSession(Date.parse('2026-10-20T05:00:00Z'), replaced.gates.session).open, true);
+  assert.equal(marketSession(Date.parse('2026-10-21T05:00:00Z'), replaced.gates.session).open, false);
+  assert.equal(replaced.gates.session.openMinutes, 555);
+  assert.equal(replaced.gates.session.closeMinutes, 930);
+});
+
+test('an empty holiday list degrades to the hours and the weekend, and does not invent a closure', () => {
+  const none = resolveRiskConfig({ gates: { session: { holidays: [] } } });
+  assert.equal(marketSession(Date.parse('2026-10-20T05:00:00Z'), none.gates.session).open, true);
+});
+
 test('istDayStart is IST midnight, so the daily-loss window is the trading day', () => {
   // 2026-10-17 07:30 IST == 02:00 UTC -> the day began at 2026-10-16T18:30:00Z.
   assert.equal(istDayStart(Date.parse('2026-10-17T02:00:00Z')), '2026-10-16T18:30:00.000Z');

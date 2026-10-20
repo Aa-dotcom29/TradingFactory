@@ -63,9 +63,10 @@ class RepeatTracker {
 // The feed can only be judged late while a session is running. Outside it no new reading can exist,
 // so the state is CLOSED and the supervisor stays quiet instead of crying stale every evening.
 //
-// Public holidays are not modelled anywhere in the harness. On one the exchange is nominally open,
-// so the feed reads STALE until the next real session - a false positive that is preferable to
-// hiding a genuine feed failure during trading hours. See docs/slice-9-session-aware-ingestion.md.
+// Public holidays are modelled in `../session`, so a holiday reads CLOSED too. That matters more
+// than the peace and quiet: on 20 October 2026 (Dussehra) the exchange never opened, and with the
+// clock treating it as a live session the feed went STALE at 10:39 and stayed there - a real alarm
+// raised for the wrong reason, which is the kind a household learns to ignore.
 function feedState(latest, options = {}) {
   const now = options.now || Date.now();
   const staleAfterMs = options.staleAfterMs || 120000;

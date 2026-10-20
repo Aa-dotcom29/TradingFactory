@@ -290,6 +290,58 @@ test('an option-premium plan is still refused a spot series even when it carries
   );
 });
 
+// The bug the first live session found, as a test. A bearish view buys a put, and every option plan
+// the harness composed came back "short plan levels are out of order (target 110, entry 100, stop
+// 95)" - on every pass, forever. The levels were right; the evaluator was reading the market view
+// as the position side and demanding a short's level order from a long position's numbers.
+test('a bearish option plan is judged as the long position it is', () => {
+  const result = evaluate(
+    { direction: 'BEARISH', instrument: 'OPTION', strike: 22000, option_type: 'PE', entry: 100, target: 110, stop: 95 },
+    [{ at: at(5), price: 104 }, { at: at(20), price: 112 }],
+    { priceSource: PRICE_SOURCE.OPTION },
+  );
+  assert.equal(result.status, STATUS.CLOSED);
+  assert.equal(result.result, RESULT.TARGET);
+  assert.equal(result.exit, 110);
+  assert.equal(result.pnlPct, 10, 'a rising premium is a gain for a bought put');
+  assert.equal(result.side, 'LONG');
+  assert.equal(result.direction, 'BEARISH', 'the market view is still reported as bearish');
+});
+
+test('a bought put that falls to its stop is a loss, not a win', () => {
+  const result = evaluate(
+    { direction: 'BEARISH', instrument: 'OPTION', strike: 22000, option_type: 'PE', entry: 100, target: 110, stop: 95 },
+    [{ at: at(5), price: 95 }],
+    { priceSource: PRICE_SOURCE.OPTION },
+  );
+  assert.equal(result.status, STATUS.CLOSED);
+  assert.equal(result.result, RESULT.STOP);
+  assert.equal(result.pnlPct, -5);
+  assert.equal(result.win, false);
+});
+
+test('a plan that states its own side outranks the view it was built from', () => {
+  // `position` is the plan's own word on how it is held, and it wins outright.
+  const result = evaluate(
+    {
+      direction: 'BEARISH',
+      instrument: 'OPTION',
+      strike: 22000,
+      option_type: 'PE',
+      entry: 100,
+      target: 90,
+      stop: 105,
+      snapshot: { plan: { kind: 'OPTION', position: 'SHORT' } },
+    },
+    [{ at: at(5), price: 89 }],
+    { priceSource: PRICE_SOURCE.OPTION },
+  );
+  assert.equal(result.side, 'SHORT');
+  assert.equal(result.result, RESULT.TARGET);
+  assert.equal(result.exit, 90);
+  assert.equal(result.pnlPct, 10);
+});
+
 test('an underlying plan offered an option-premium series is unevaluable, never scored on it', () => {
   const result = evaluate({}, [{ at: at(5), price: 111 }], { priceSource: PRICE_SOURCE.OPTION });
   assert.equal(result.status, STATUS.UNEVALUABLE);
@@ -309,10 +361,10 @@ test('planKind reads the explicit kind first, then the strike, then the instrume
   assert.equal(planKind(signal({ instrument: 'EQUITY' }), null), 'UNDERLYING');
 });
 
-test('movePct is direction-aware', () => {
-  assert.equal(movePct('BULLISH', 100, 110), 10);
-  assert.equal(movePct('BEARISH', 100, 110), -10);
-  assert.equal(movePct('BEARISH', 100, 90), 10);
+test('movePct is side-aware, not view-aware', () => {
+  assert.equal(movePct('LONG', 100, 110), 10);
+  assert.equal(movePct('SHORT', 100, 110), -10);
+  assert.equal(movePct('SHORT', 100, 90), 10);
 });
 
 // ---------------------------------------------------------------------------

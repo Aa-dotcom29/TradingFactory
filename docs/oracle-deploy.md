@@ -5,14 +5,53 @@ the Next.js dashboard via `docker-compose.yml`. Zero recurring cost, truly alway
 
 ## 1. Create the VM
 
+> **Read this before touching the shape menu.** Always Free Ampere A1 is **2 OCPU / 12 GB**,
+> effective **15 June 2026**. From **18 August 2026** Oracle **terminates** Always Free instances
+> that sit above that ceiling. Nearly every guide on the internet - and every earlier revision of
+> this file - says 4 OCPU / 24 GB. Following one of those costs you the instance weeks later, with
+> no warning and no appeal. `scripts/oracle-a1-retry.sh` refuses to launch above 2 / 12 for exactly
+> this reason; do not work around it.
+
 1. Oracle Cloud Console -> Compute -> Instances -> **Create instance**.
 2. Image: **Oracle Linux 9** aarch64 (validated) or **Ubuntu 22.04** aarch64.
-3. Shape: **VM.Standard.A1.Flex** (ARM Ampere). Always Free allows up to 4 OCPUs and
-   24 GB RAM - 1 OCPU / 6 GB is enough to start. This is the Always Free ARM shape; do not pick
-   a paid x8x shape. Retry later off-peak if the shape reports out of capacity in your AD.
+3. Shape: **VM.Standard.A1.Flex** (ARM Ampere), **2 OCPU / 12 GB**. That is the whole Always Free
+   A1 allowance, and it is far more than this stack needs - 1 OCPU / 6 GB also fits and is easier
+   to be granted. Do not pick a paid x8x shape.
 4. Add your SSH public key.
-5. Ensure the subnet has a public IP. In the security list allow inbound **22** (SSH) and
+5. **Attach a reserved public IP before you register anything with Angel One** - see step 6.
+6. Ensure the subnet has a public IP. In the security list allow inbound **22** (SSH) and
    **3000** (dashboard). Add **80**/**443** when you bring up the TLS overlay in section 8.
+
+**"Out of capacity for shape VM.Standard.A1.Flex"** is the normal answer on a busy free tier, not a
+mistake you made. Capacity is granted per availability domain and it comes and goes through the day.
+`scripts/oracle-a1-retry.sh` asks again across every AD until one says yes:
+
+```bash
+COMPARTMENT_OCID=ocid1.compartment... SUBNET_OCID=ocid1.subnet... \
+  ./scripts/oracle-a1-retry.sh --dry-run          # read the plan first
+COMPARTMENT_OCID=... SUBNET_OCID=... \
+  ./scripts/oracle-a1-retry.sh --reserve-ip       # then run it for real
+```
+
+It is written for **Oracle Cloud Shell**, which already has an authenticated `oci` CLI, so there is
+nothing to install.
+
+> **Ephemeral versus reserved.** An ephemeral IP survives reboots and stop/starts; it is released
+> only when the instance is **terminated** or its VNIC is deleted. An existing ephemeral address
+> **cannot** be converted to reserved. OCI charges nothing for public IPv4 either way, so there is
+> no reason to accept an ephemeral one: create the instance, attach a **reserved** public IP, and
+> only then register that address as the Angel One SmartAPI **primary IP**. Do it in that order, or
+> you will be re-registering the IP with Angel every time the instance is rebuilt.
+
+> **Idle reclamation.** Oracle reclaims Always Free compute that goes unused for seven days - CPU
+> p95 below 20%, network below 20% and, on A1 only, memory below 20%, all together. A light
+> ten-second poller is exactly the workload that trips the memory criterion. If the instance
+> disappears after a quiet week, this is why. Upgrading the tenancy to PAYG keeps it inside the
+> Always Free limits, costs nothing, and is reported to bypass idle reclamation.
+
+> **If A1 never grants.** The two AMD micros (`VM.Standard.E2.1.Micro`, 1/8 OCPU / 1 GB each) are
+> not contended and are not subject to idle reclamation. They are small - run Postgres and the
+> harness on one and the dashboard on the other - but they are always available.
 
 > Postgres is not exposed at all: the compose file binds `5432` to `127.0.0.1` only, and the
 > worker and dashboard reach it over the Docker network. Leave `5432` closed in the security

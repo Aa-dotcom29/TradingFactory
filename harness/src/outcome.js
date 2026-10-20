@@ -39,14 +39,35 @@ function round(value, places = 4) {
   return Math.round(value * factor) / factor;
 }
 
-function isLong(direction) {
-  return String(direction || '').toUpperCase() === 'BULLISH';
+const isBullish = (direction) => String(direction || '').toUpperCase() === 'BULLISH';
+
+// Which way the *position* makes money, which is not the same question as which way the market is
+// expected to go.
+//
+// Buying a put because the view is bearish is still a long position: it pays when the premium
+// rises. Treating `direction` as the position side made every option plan unevaluable, because the
+// evaluator demanded the level order of a short - target below entry - from a plan whose levels
+// were, quite correctly, those of a long. The signal builder has always written long-premium
+// levels for bought options, so the refusal was permanent and the learning loop never saw a single
+// option trade.
+//
+// A plan's own `position` wins. When it is absent - a row written before the field existed - an
+// option plan is read as long, because this harness only ever buys options and never writes one.
+function planSide({ signal = {}, plan = null, kind = null } = {}) {
+  const explicit = String((plan && plan.position) || '').toUpperCase();
+  if (explicit === 'LONG' || explicit === 'SHORT') return explicit;
+  const resolved = kind || planKind(signal, plan);
+  if (resolved === 'OPTION') return 'LONG';
+  return isBullish(signal && signal.direction) ? 'LONG' : 'SHORT';
 }
 
-// How much the trade is up (positive) or down (negative) at a given price, as a percentage of
-// entry. Direction-aware, so the caller never has to think about long versus short again.
-function movePct(direction, entry, price) {
-  const delta = isLong(direction) ? price - entry : entry - price;
+const isLongSide = (side) => String(side || '').toUpperCase() === 'LONG';
+
+// How much the *position* is up (positive) or down (negative) at a given price, as a percentage of
+// entry. It takes the position's side, not the market view - see `planSide` for why that
+// distinction cost every option trade its verdict.
+function movePct(side, entry, price) {
+  const delta = isLongSide(side) ? price - entry : entry - price;
   return (delta / entry) * 100;
 }
 
@@ -128,11 +149,14 @@ function evaluateOutcome(options = {}) {
   // The default is the ordinary underlying series, not the series the plan would ideally have: a
   // caller who forgets to say which series it loaded must land on the refusal, never on a score.
   const kind = planKind(signal, plan);
+  const side = planSide({ signal, plan, kind });
   const priceSource = options.priceSource || PRICE_SOURCE.UNDERLYING;
 
-  const base = { horizon, symbol: signal.symbol || null, direction, entry, kind, priceSource };
+  const base = {
+    horizon, symbol: signal.symbol || null, direction, side, entry, kind, priceSource,
+  };
 
-  if (!isLong(direction) && direction !== 'BEARISH') {
+  if (!isBullish(direction) && direction !== 'BEARISH') {
     return { status: STATUS.UNEVALUABLE, ...base, reason: `direction ${direction || '(none)'} is not tradable` };
   }
   if (entry === null || entry <= 0) {
@@ -141,7 +165,8 @@ function evaluateOutcome(options = {}) {
   if (target === null || stop === null) {
     return { status: STATUS.UNEVALUABLE, ...base, reason: 'the plan is missing a target or a stop' };
   }
-  if (isLong(direction)) {
+  // Levels are ordered by the side actually held, so a bought put is checked as the long it is.
+  if (isLongSide(side)) {
     if (!(target > entry && entry > stop)) {
       return { status: STATUS.UNEVALUABLE, ...base, reason: `long plan levels are out of order (target ${target}, entry ${entry}, stop ${stop})` };
     }
@@ -213,7 +238,7 @@ function evaluateOutcome(options = {}) {
     };
   }
 
-  const long = isLong(direction);
+  const long = isLongSide(side);
   let exit = null;
   let exitAt = null;
   let result = null;
@@ -285,13 +310,13 @@ function evaluateOutcome(options = {}) {
     const low = reading.low === undefined ? reading.price : reading.low;
     const favourable = long ? high : low;
     const adverse = long ? low : high;
-    const up = movePct(direction, entry, favourable);
-    const down = movePct(direction, entry, adverse);
+    const up = movePct(side, entry, favourable);
+    const down = movePct(side, entry, adverse);
     if (up > mfe) mfe = up;
     if (down < mae) mae = down;
   }
 
-  const pnlPct = movePct(direction, entry, exit);
+  const pnlPct = movePct(side, entry, exit);
 
   return {
     status: STATUS.CLOSED,
@@ -498,6 +523,8 @@ module.exports = {
   scoreOutcomes,
   proposeConfigChange,
   planKind,
+  planSide,
+  isLongSide,
   movePct,
   PRICE_SOURCE,
   DEFAULT_PROPOSAL_RULES,

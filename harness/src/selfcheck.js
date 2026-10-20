@@ -15,9 +15,11 @@ const { toQuotePayload, toAngelExpiry } = require('./sources/angel-quote');
 const { AngelClient } = require('./sources/angel-client');
 const { resolvePublishMode } = require('./publish-mode');
 const {
-  buildPlan, computeStage, resolveSignalConfig, DEFAULT_SIGNAL_CONFIG,
+  buildPlan, computeStage, resolveSignalConfig, DEFAULT_SIGNAL_CONFIG, selectContract,
 } = require('./signals');
-const { evaluateRisk, resolveRiskConfig, DEFAULT_RISK_CONFIG, lossStreak } = require('./risk');
+const {
+  evaluateRisk, resolveRiskConfig, DEFAULT_RISK_CONFIG, lossStreak, marketSession,
+} = require('./risk');
 const { formatSignal, TelegramClient } = require('./telegram');
 const { NewsWorker } = require('./workers/w1-news');
 const { FlowWorker } = require('./workers/w2-flow');
@@ -151,6 +153,9 @@ async function pureFunctionChecks() {
     flow: flowFeature,
     quote: null,
     config: signalConfig,
+    // Pinned: the fixture contracts expire 27 October 2026 and an expired contract is refused, so
+    // the wall clock must not decide whether this check passes.
+    now: Date.parse('2026-10-14T05:00:00Z'),
   });
   const ready = computeStage({
     verdict: { direction: 'BULLISH', score: 0.5, confidence: 0.6 },
@@ -173,6 +178,26 @@ async function pureFunctionChecks() {
     'slice 4 withholds READY without a directional verdict',
     withheldStage.stage === 'IDLE',
     `stage=${withheldStage.stage}`,
+  );
+
+  // A flow snapshot outlives the session that made it, so the contracts it names can expire while
+  // the bias meter is still ageing them. Selecting one prices a plan at a dead contract's last
+  // trade: on 20 October 2026 that produced a 0.05 NIFTY put whose levels were, fatally, in order.
+  const expiredPick = selectContract({
+    direction: 'BEARISH',
+    spot: 22850,
+    flow: {
+      topContracts: [
+        { kind: 'OPTION', optionType: 'PE', strike: 22850, expiry: '19OCT2026', price: 0.05 },
+      ],
+    },
+    config: signalConfig,
+    now: Date.parse('2026-10-20T05:07:00Z'),
+  });
+  record(
+    'slice 10 an expired contract is refused, not priced at its last trade',
+    expiredPick.ok === false && /has expired/.test(expiredPick.reason || ''),
+    `ok=${expiredPick.ok} reason=${expiredPick.reason}`,
   );
 
   record(
@@ -342,6 +367,28 @@ async function pureFunctionChecks() {
     `scored=${optionScored.status}/${optionScored.result} refused=${optionRefused.status}`,
   );
 
+  // The market view and the position side are different questions. A bearish view buys a put, and
+  // a bought put is long premium, so its target sits above its entry. Reading the view as the side
+  // made every option plan unevaluable - and it warned about it every fifteen seconds.
+  const putPlan = evaluateOutcome({
+    signal: {
+      horizon: 'SWING', symbol: 'NIFTY 50', direction: 'BEARISH', instrument: 'NIFTY 19OCT2026 23150 PE',
+      strike: 23150, option_type: 'PE', entry: 100, target: 110, stop: 95,
+      publishedAt: '2026-10-14T05:00:00Z',
+      snapshot: { plan: { kind: 'OPTION', position: 'LONG', expiry: '19-Oct-2026' } },
+    },
+    path: [{ at: '2026-10-14T05:10:00Z', price: 112 }],
+    priceSource: PRICE_SOURCE.OPTION,
+    holdingDays: 30,
+    now: Date.parse('2026-10-14T06:00:00Z'),
+  });
+  record(
+    'slice 10 a bearish option plan is judged as the long position it is',
+    putPlan.status === STATUS.CLOSED && putPlan.result === 'TARGET' && putPlan.pnlPct === 10
+      && putPlan.side === 'LONG' && putPlan.direction === 'BEARISH',
+    `status=${putPlan.status} side=${putPlan.side} pnl=${putPlan.pnlPct}`,
+  );
+
   // Publishing is switchable per horizon, which is what allows Intraday to be turned on last.
   const publishEnv = { PUBLISH_MODE: 'shadow', PUBLISH_MODE_SWING: 'live' };
   record(
@@ -368,6 +415,22 @@ async function pureFunctionChecks() {
       && agedQuote.score > 0
       && shutQuote.confidence <= biasConfig.price.closedSessionConfidence,
     `aged=${agedQuote.confidence} closed=${shutQuote.confidence}`,
+  );
+
+  // Dussehra, 20 October 2026: a Tuesday, so only the holiday list can close it. Without one the
+  // clock reported a live session all day - which is how an open-market risk gate came to approve
+  // plans built from the previous session's frozen prices.
+  const holidaySession = marketSession(Date.parse('2026-10-20T05:00:00Z'), riskConfig.gates.session);
+  const holidayFeed = feedState('2026-10-20T03:37:00Z', {
+    now: Date.parse('2026-10-20T05:10:00Z'),
+    staleAfterMs: 1000,
+  });
+  record(
+    'slice 10 a published holiday closes the session, the gate and the feed',
+    holidaySession.open === false && holidaySession.holiday === '2026-10-20'
+      && /holiday/.test(holidaySession.reason)
+      && holidayFeed.state === 'CLOSED',
+    `open=${holidaySession.open} feed=${holidayFeed.state} reason=${holidaySession.reason}`,
   );
 
   const T_SHUT = Date.parse('2026-10-17T12:00:00Z'); // Saturday, NSE shut

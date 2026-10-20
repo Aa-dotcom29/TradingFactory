@@ -127,9 +127,9 @@ If a delivery fails, the event is `DELIVERY_FAILED`, the publisher records a `WA
 - The supervisor's `feed` state. Out of hours it reads `CLOSED`, and that is correct: the market
   cannot produce a reading, so the quote, option-premium and OI-spurt polls all skip themselves
   (`skipped: market-closed` in the cycle log) and the last in-session reading stands as the last
-  known price. `STALE` is the one that matters, and it only means something **while the NSE is
-  trading**. A `STALE` on an NSE holiday is expected - public holidays are not modelled - so check
-  the calendar before treating it as a broken feed.
+  known price. Public holidays read `CLOSED` too, since Slice 10. `STALE` is the one that matters,
+  and it only means something **while the NSE is trading** - so if `feed` reads `STALE` in the middle
+  of a session, the feed really is broken.
 - `risk_decisions` - why anything was approved, rejected or deferred, gate by gate. A `DEFERRED` after
   hours is correct, not a fault.
 - The evaluator's `sources_health` row - `N closed of M open`. An option-premium position is scored
@@ -157,8 +157,10 @@ any broker, by design.
   before. Spot/futures plans are scored normally.
 - **A position with no price path is never settled.** The evaluator waits for evidence rather than
   inventing an exit.
-- **Public holidays are not modelled.** A weekday holiday simply yields no fresh evidence, so no
-  candidate is raised - but the session clock itself does not know about it.
+- **Public holidays are in the session clock for 2026 only.** They are a built-in list, replaceable
+  through `config_registry` (`gates.session.holidays`). It must be refreshed each year; a stale list
+  fails safe - a past year's dates never match - and simply degrades to the old behaviour. Muhurat
+  trading is deliberately not modelled.
 - **Evidence-ageing windows are per component, not per horizon** (see `evidence-ageing.md`).
 - **`bars_held` counts readings, not exchange bars**; `payload.heldMinutes` carries the real duration.
 - **The mobile layout is verified by viewport width, not on a physical device.** Every route now has\n  zero page-level horizontal overflow at 360, 390, 414, 768, 1024 and 1280px, and the wide tables\n  scroll inside their own cards. A real-device pass (touch targets, iOS Safari chrome) is still worth\n  doing - see [`mobile-layout.md`](./mobile-layout.md).
@@ -166,6 +168,10 @@ any broker, by design.
 ## Hosting status
 
 Oracle Cloud A1.Flex creation is currently blocked by capacity in the Hyderabad AD
-("Out of capacity for shape VM.Standard.A1.Flex ... AD-1"). Options, in order of preference: retry
-off-peak, request a smaller shape (1 OCPU / 6 GB is enough to start), or upgrade the tenancy to
-Pay-As-You-Go so the Always Free allowance is guaranteed rather than wait-listed.
+("Out of capacity for shape VM.Standard.A1.Flex ... AD-1"). `scripts/oracle-a1-retry.sh` rotates
+through the availability domains until one grants capacity, and refuses anything above the Always
+Free ceiling of **2 OCPU / 12 GB** (the limit from 15 June 2026; above it, instances are terminated
+from 18 August 2026). Options, in order of preference: run the script, ask for less (1 OCPU / 6 GB
+is enough to start), or upgrade the tenancy to Pay-As-You-Go so the allowance is guaranteed rather
+than wait-listed. See [`oracle-deploy.md`](./oracle-deploy.md) for the reserved-IP ordering and the
+idle-reclamation rule.

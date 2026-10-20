@@ -136,17 +136,20 @@ Totals: harness tests **193/193** (10 new), selfcheck **48/48** (3 new).
 
 ## Known limitations, stated plainly
 
-1. **NSE holidays still read as stale.** Public holidays are not modelled anywhere in the harness, so
-   on one the session clock says "open" while the exchange is shut. The market poll stores one batch
-   and then suppresses the identical repeats, the flow poll keeps archiving the static table for the
-   day (the guard that would have stopped it was removed on purpose, above), and the supervisor
-   reports `STALE` for the day. That false positive is the deliberate trade: a warning that fires on
-   fifteen known holidays is better than a silent gap that hides a genuine feed failure during
-   trading hours. The durable fix is a holiday calendar, and it is not in this slice.
+1. **NSE holidays read as stale _(fixed in Slice 10)_**. Public holidays were not modelled anywhere in
+   the harness, so on one the session clock said "open" while the exchange was shut. The market poll
+   stored one batch and then suppressed the identical repeats, the flow poll kept archiving the static
+   table for the day (the guard that would have stopped it was removed on purpose, above), and the
+   supervisor reported `STALE` for the day. That false positive was the deliberate trade: a warning
+   that fires on fifteen known holidays is better than a silent gap that hides a genuine feed failure
+   during trading hours. It was the right trade, and it was still worse than the fix - on 20 October
+   2026 the same gap let a closed market look open to the *whole* pipeline, not just the supervisor.
+   See [`slice-10-live-session-fixes.md`](./slice-10-live-session-fixes.md).
 2. **The last reading before the close is the record.** Flow stops being polled at 15:30, so the
    final archived flow snapshot is the one taken just before the close, not any post-close revision
    NSE may publish. Nothing downstream reads flow out of hours, and the next session's first poll
    supersedes it, but the archive is one reading short of "settled".
 3. **The repeat guard resets on restart.** A worker that restarts mid-holiday stores one duplicate
-   batch before it recognises the freeze again. Bounded at one per restart, by design.4. **No signals are affected.** This slice changes when data is fetched and stored, not how it is
+   batch before it recognises the freeze again. Bounded at one per restart, by design.
+4. **No signals are affected.** This slice changes when data is fetched and stored, not how it is
    scored. Bias weights, the signal lifecycle, the risk gate and the publisher are untouched.

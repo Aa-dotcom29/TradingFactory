@@ -69,8 +69,9 @@ does not grow the table a line per tick.
 ### The session, and what is honest about it
 
 The NSE window (09:15-15:30 IST, weekdays) is checked on an explicit IST offset, so the host
-timezone is irrelevant. Public holidays are not modelled: a holiday produces no fresh evidence
-upstream, so no candidate is raised in the first place. That is stated rather than hidden.
+timezone is irrelevant. Public holidays are modelled in the shared session clock since Slice 10: the
+list lives in `harness/src/session.js` and can be replaced through `config_registry`
+(`gates.session.holidays`). Before that, a weekday holiday looked like an open market to the gate.
 
 ### The loss controls are wired but not yet fed
 

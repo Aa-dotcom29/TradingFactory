@@ -339,6 +339,7 @@ class SignalWorker {
           flow: flowMap.get(verdict.symbol) || null,
           quote: quoteMap.get(verdict.symbol) || null,
           config: signalConfig,
+          now,
         });
         const stage = computeStage({
           verdict,
