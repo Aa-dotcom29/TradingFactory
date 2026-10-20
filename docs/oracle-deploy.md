@@ -3,6 +3,32 @@
 Target: one Oracle Cloud **Always Free** ARM VM running Postgres + the harness worker +
 the Next.js dashboard via `docker-compose.yml`. Zero recurring cost, truly always-on.
 
+## 0. Create the account (one-time)
+
+The account is free and has no expiry; the card is used only for identity verification.
+
+- One Always Free account per person. Do not create a second account to get around a declined
+  card; Oracle treats that as abuse.
+- Accepted: Visa or Mastercard **credit** cards, or debit cards that work like credit
+  (international/online transactions enabled). Rejected: RuPay, prepaid, virtual, single-use,
+  and PIN-only debit cards. RuPay fails even with international transactions enabled.
+- Oracle places a temporary authorisation hold (about USD 1 / INR 100). Your bank reverses it in
+  3-5 days. It is not a charge unless you upgrade to Pay As You Go.
+- Enter your real name and address exactly as they appear on the card. A mismatch is a common
+  decline reason.
+- Choose **India South (Hyderabad)** or **India West (Mumbai)** as the home region. It cannot be
+  changed after signup. Hyderabad is closer for most of India; A1 capacity is scarcer there,
+  which the launch script handles by rotating availability domains.
+- If the card is declined: wait a day, then try a different Visa/Mastercard and a different
+  browser or network. Repeated attempts increase Oracle's fraud score. If it still fails, use the
+  signup-issue form instead of retrying.
+- A family member's Visa/Mastercard can be used with their consent. Oracle requires accurate
+  billing details, and the hold is reversed.
+- Wait for the "Your account is ready" email before opening Cloud Shell. Provisioning can take a
+  few minutes to a few hours.
+
+After signup, the one-command path below is all you need.
+
 ## Quick start: one command
 
 `scripts/oracle-deploy.sh` runs the whole provisioning path from **Oracle Cloud Shell**, which
@@ -42,7 +68,9 @@ What it deliberately leaves to you:
 
 - **Register the reserved IP as the SmartAPI primary IP** in the Angel One console. That is an
   account action, and it only works after the IP exists - which is why the script reserves it
-  first. The worker cannot log in until this is done.
+  first. Angel's current policy (September 2025) enforces the static IP only for Orders and GTT;
+  login and data APIs are not origin-gated. Register it anyway: it keeps the key aligned with the
+  host and is required before any order API is ever enabled.
 - **Flip delivery to live**, one horizon at a time: `PUBLISH_MODE_POSITIONAL=live`, then `_SWING`,
   then `_INTRADAY` last. The deployed stack starts in shadow.
 
