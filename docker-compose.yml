@@ -64,8 +64,13 @@ services:
       HARNESS_YAHOO_SPACING_MS: ${HARNESS_YAHOO_SPACING_MS:-400}
 
       # Delivery and retention. `PUBLISH_MODE=shadow` writes the signal and the exact message but
-      # sends nothing; flip to `live` per horizon once the household trusts the output.
+      # sends nothing; flip to `live` per horizon once the household trusts the output. The scoped
+      # variables must be declared here too: compose only forwards what it is told about, so a
+      # PUBLISH_MODE_SWING=live in .env would otherwise never reach the container.
       PUBLISH_MODE: ${PUBLISH_MODE:-shadow}
+      PUBLISH_MODE_INTRADAY: ${PUBLISH_MODE_INTRADAY:-}
+      PUBLISH_MODE_SWING: ${PUBLISH_MODE_SWING:-}
+      PUBLISH_MODE_POSITIONAL: ${PUBLISH_MODE_POSITIONAL:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       TELEGRAM_API_ROOT: ${TELEGRAM_API_ROOT:-https://api.telegram.org}
@@ -90,6 +95,12 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-tf}:${POSTGRES_PASSWORD:-tf_local_password}@db:5432/${POSTGRES_DB:-tradingfactory}
       DATABASE_SSL: "false"
       WEB_DB_POOL: ${WEB_DB_POOL:-5}
+      # The dashboard labels each signal with the mode the worker would have used, so it needs the
+      # same per-horizon values.
+      PUBLISH_MODE: ${PUBLISH_MODE:-shadow}
+      PUBLISH_MODE_INTRADAY: ${PUBLISH_MODE_INTRADAY:-}
+      PUBLISH_MODE_SWING: ${PUBLISH_MODE_SWING:-}
+      PUBLISH_MODE_POSITIONAL: ${PUBLISH_MODE_POSITIONAL:-}
     ports:
       - "3000:3000"
 

@@ -98,5 +98,5 @@ npm --prefix web run create-user -- --email you@example.com
 npm run web:dev                                          # http://localhost:3000
 ```
 
-In production `docker compose up -d --build` also starts the dashboard on port 3000. See [`docs/oracle-deploy.md`](./docs/oracle-deploy.md) for the Always Free deployment.
+In production `docker compose up -d --build` also starts the dashboard on port 3000. See [`docs/oracle-deploy.md`](./docs/oracle-deploy.md) for the Always Free deployment - `scripts/oracle-deploy.sh` provisions the VM, reserves its public IP, opens the ports and bootstraps Docker, TLS and the stack in one command from Cloud Shell.
 

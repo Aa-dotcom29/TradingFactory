@@ -10,6 +10,9 @@ work/
 harness/data/
 *.ndjson
 
+# oracle deployment inventory (contains the instance OCID and public IP)
+oracle-inventory.env
+
 # agent tooling artifacts (installed skills, not project code)
 .agents/
 skills-lock.json

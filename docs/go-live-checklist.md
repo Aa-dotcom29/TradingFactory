@@ -168,10 +168,13 @@ any broker, by design.
 ## Hosting status
 
 Oracle Cloud A1.Flex creation is currently blocked by capacity in the Hyderabad AD
-("Out of capacity for shape VM.Standard.A1.Flex ... AD-1"). `scripts/oracle-a1-retry.sh` rotates
-through the availability domains until one grants capacity, and refuses anything above the Always
-Free ceiling of **2 OCPU / 12 GB** (the limit from 15 June 2026; above it, instances are terminated
-from 18 August 2026). Options, in order of preference: run the script, ask for less (1 OCPU / 6 GB
-is enough to start), or upgrade the tenancy to Pay-As-You-Go so the allowance is guaranteed rather
-than wait-listed. See [`oracle-deploy.md`](./oracle-deploy.md) for the reserved-IP ordering and the
-idle-reclamation rule.
+("Out of capacity for shape VM.Standard.A1.Flex ... AD-1"). `scripts/oracle-deploy.sh` does the
+whole deployment in one command from Cloud Shell - it rotates through the availability domains
+until one grants capacity, reserves the public IP, opens the security-list ports and bootstraps
+Docker, TLS and the stack over SSH - and refuses anything above the Always Free ceiling of
+**2 OCPU / 12 GB** (the limit from 15 June 2026; above it, instances are terminated from
+18 August 2026). Options, in order of preference: run the script, ask for less (1 OCPU / 6 GB
+is enough to start; it degrades there automatically after three empty rounds), or upgrade the
+tenancy to Pay-As-You-Go so the allowance is guaranteed rather than wait-listed. See
+[`oracle-deploy.md`](./oracle-deploy.md) for the reserved-IP ordering and the idle-reclamation
+rule.
