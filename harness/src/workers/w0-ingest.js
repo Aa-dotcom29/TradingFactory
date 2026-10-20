@@ -72,10 +72,13 @@ class IngestWorker {
     const sql = this.sql;
     if (!sql) return;
     const ok = status === 'HEALTHY';
+    // Only a real fault stamps last_error_at. A neutral state (IDLE / CLOSED) means there was
+    // nothing to do, so it must not leave the dashboard looking like a failure streak.
+    const fault = status === 'WARNING' || status === 'ERROR';
     await sql`
       insert into sources_health (source, status, detail, last_ok_at, last_error_at, checked_at)
       values (${source}, ${status}, ${detail || null},
-              ${ok ? new Date() : null}, ${ok ? null : new Date()}, now())
+              ${ok ? new Date() : null}, ${fault ? new Date() : null}, now())
       on conflict (source) do update set
         status = excluded.status,
         detail = excluded.detail,
@@ -290,7 +293,13 @@ class IngestWorker {
     try {
       await this.ensureTokens();
       const open = await this.loadOpenOptionSignals();
-      if (!open.length) return { contracts: 0, skipped: 'no-open-option-positions' };
+      // No held position means there is no premium to track. Saying so keeps the dashboard honest:
+      // returning silently here used to leave a stale WARNING (and its old last_error_at) on the
+      // row indefinitely, because nothing ever overwrote it while the book was empty.
+      if (!open.length) {
+        await this.markSource('angel-options', 'IDLE', 'no open option positions to quote');
+        return { contracts: 0, skipped: 'no-open-option-positions' };
+      }
 
       const wanted = new Map();
       const unresolved = [];

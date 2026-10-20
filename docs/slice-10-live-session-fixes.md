@@ -184,6 +184,35 @@ every real swing signal on the index. Evidence tables and `config_registry` were
 
 ---
 
+## Follow-up: an idle worker is not a broken one
+
+The first holiday cycle after the fixes still left two false alarms in `sources_health`.
+
+`flow-features WARNING - 0 symbols from 0 snapshot(s)`: W0 correctly stopped enqueuing flow
+snapshots once the exchange shut, so W2 drained nothing - and marked that as a warning on every
+drain, stamping `last_error_at` each time. A healthy harness would have shown a warn pill from
+the close until the next open, every evening, weekend and holiday.
+
+`angel-options WARNING - 2 open option position(s) could not be resolved to a contract`: a real
+warning from the defective session, but nothing could clear it. With an empty book W0 returned
+before writing anything, so the old row and its old `last_error_at` survived indefinitely.
+
+Both workers now describe the idle state instead of guessing at a fault:
+
+| situation | status | last_error_at |
+|---|---|---|
+| flow drain empty, exchange shut | `CLOSED` - no flow snapshots while the exchange is shut | untouched |
+| flow drain empty, exchange open | `WARNING` - the poll that should have fed it failed | stamped |
+| no open option position during the session | `IDLE` - no open option positions to quote | untouched |
+| option contract(s) could not be resolved | `WARNING` | stamped |
+
+Neutral statuses (`CLOSED`, `IDLE`) no longer touch `last_error_at`, and the dashboard maps both
+to the muted tone, alongside the `CLOSED` feed state the supervisor already reports.
+
+Covered by `harness/test/health-status.test.js` (5 cases).
+
+---
+
 ## Still open
 
 1. **The 2026 holiday list is a snapshot, not a feed.** Refresh it each January. It can be replaced

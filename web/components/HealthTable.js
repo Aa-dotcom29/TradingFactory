@@ -4,6 +4,8 @@ const TONE = {
   OK: 'up',
   HEALTHY: 'up',
   LIVE: 'up',
+  CLOSED: 'muted',
+  IDLE: 'muted',
   DEGRADED: 'warn',
   WARNING: 'warn',
   STALE: 'warn',

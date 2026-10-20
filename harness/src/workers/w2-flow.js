@@ -14,8 +14,25 @@ const db = require('../db');
 const queue = require('../queue');
 const { TOPICS } = require('../topics');
 const { computeFlowFeatures } = require('../intel');
+const { marketSession } = require('../session');
 
 const log = require('../logger').child({ module: 'w2' });
+
+// What an empty drain means. While the exchange is shut, no flow snapshot is produced, so there is
+// nothing for this worker to build - that is the expected state, not a fault. Reporting WARNING
+// there stamped `last_error_at` on every tick of every evening, weekend and holiday and made a
+// perfectly idle harness look broken. A closed exchange reads CLOSED, the same word the feed state
+// already uses, and the same idea as the risk gate's DEFERRED. An empty drain with the market open
+// is still a warning: the poll that should have fed it is the thing that failed.
+function drainHealth({ processed = 0, symbols = 0, open = true } = {}) {
+  if (!processed && !open) {
+    return { status: 'CLOSED', detail: 'no flow snapshots while the exchange is shut' };
+  }
+  return {
+    status: processed ? 'HEALTHY' : 'WARNING',
+    detail: `${symbols} symbols from ${processed} snapshot(s)`,
+  };
+}
 
 class FlowWorker {
   constructor(options = {}) {
@@ -35,10 +52,13 @@ class FlowWorker {
     const sql = this.sql;
     if (!sql) return;
     const ok = status === 'HEALTHY';
+    // CLOSED is idle, not broken: it must not touch last_error_at, or a quiet night would read as a
+    // failure streak in the dashboard's freshness columns.
+    const fault = status === 'WARNING' || status === 'ERROR';
     await sql`
       insert into sources_health (source, status, detail, last_ok_at, last_error_at, checked_at)
       values (${source}, ${status}, ${detail || null},
-              ${ok ? new Date() : null}, ${ok ? null : new Date()}, now())
+              ${ok ? new Date() : null}, ${fault ? new Date() : null}, now())
       on conflict (source) do update set
         status = excluded.status,
         detail = excluded.detail,
@@ -125,11 +145,12 @@ class FlowWorker {
       }
     }
 
-    await this.markSource(
-      'flow-features',
-      summary.processed ? 'HEALTHY' : 'WARNING',
-      `${summary.symbols} symbols from ${summary.processed} snapshot(s)`,
-    );
+    const health = drainHealth({
+      processed: summary.processed,
+      symbols: summary.symbols,
+      open: marketSession().open,
+    });
+    await this.markSource('flow-features', health.status, health.detail);
     return summary;
   }
 
@@ -138,4 +159,4 @@ class FlowWorker {
   }
 }
 
-module.exports = { FlowWorker };
+module.exports = { FlowWorker, drainHealth };
