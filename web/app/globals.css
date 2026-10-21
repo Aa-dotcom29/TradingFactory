@@ -959,3 +959,171 @@ input:focus, select:focus { outline: none; border-color: var(--sig); box-shadow:
   border-bottom: 1px solid var(--rule-hi);
   background: var(--hull-2);
 }
+
+/* =============================================================================
+   Agent Arcade - the whole harness on one animated board
+   -----------------------------------------------------------------------------
+   Every worker is one node on a two-lane board: the main decision pipeline
+   (W0..W7) and the support lanes (W8 supervision, W9 live tape). A small beat
+   dot on each node pulses in board order on a shared clock, so the wave travels
+   Worker 0 -> Worker 9 and loops - a continuous read of "the machine is alive".
+   The beat inherits the node's status colour, so a failing worker pulses red
+   instead of green and the glance still tells the truth. Pure CSS: no JS in the
+   animation path, and reduced-motion users get a still board with the same info.
+   ============================================================================= */
+
+.arcade-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  margin-bottom: 14px;
+}
+.arcade-head h2 { margin-bottom: 4px; }
+.arcade-totals { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+.arcade-board { display: flex; flex-direction: column; gap: 14px; }
+
+.arcade-lane .lane-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.arcade-lane .lane-label .arrow-hint {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  opacity: 0.75;
+}
+
+.arcade-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.arcade-strip .node {
+  position: relative;
+  background: var(--hull);
+  padding: 11px 12px 12px 26px;
+  overflow: hidden;
+  transition: background 0.3s ease;
+}
+/* The connector: same arrowhead language as the pipeline strip. */
+.arcade-strip .node:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--rule-hi);
+  transform: translateY(-50%);
+  z-index: 2;
+}
+
+.arcade-strip .node .id {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+}
+.arcade-strip .node .name {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-top: 3px;
+}
+.arcade-strip .node .blurb { margin-top: 3px; line-height: 1.35; }
+.arcade-strip .node .meta { margin-top: 8px; }
+.arcade-strip .node .detail {
+  margin-top: 6px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* The beat: a small dot whose pulse is delayed by its place in the run order.
+   Shared clock, per-index offset - one wave, continuous, forever. */
+.arcade-strip .node .beat {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  opacity: 0.45;
+  animation: arcade-beat 4.4s infinite ease-in-out;
+  animation-delay: calc(var(--i, 0) * 0.4s);
+}
+.arcade-strip .node.lane-up .beat { background: var(--up); }
+.arcade-strip .node.lane-warn .beat { background: var(--warn); }
+.arcade-strip .node.lane-down .beat { background: var(--down); }
+.arcade-strip .node.lane-muted .beat { background: var(--ink-faint); }
+
+.arcade-strip .node.lane-warn { border-left: 2px solid var(--warn); }
+.arcade-strip .node.lane-down { border-left: 2px solid var(--down); box-shadow: inset 0 0 24px rgba(255, 93, 82, 0.08); }
+.arcade-lane.lane-support .arcade-strip .node {
+  background: linear-gradient(180deg, var(--hull-2) 0%, var(--hull) 100%);
+}
+
+@keyframes arcade-beat {
+  0%, 12%, 88%, 100% {
+    transform: scale(1);
+    opacity: 0.45;
+    box-shadow: none;
+  }
+  4% {
+    transform: scale(2);
+    opacity: 1;
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.06);
+  }
+  8% {
+    transform: scale(1.35);
+    opacity: 0.75;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arcade-strip .node .beat { animation: none; opacity: 0.75; transform: scale(1.25); }
+}
+
+.arcade-report { margin-top: 16px; }
+
+.arcade-hook .arcade-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid rgba(var(--tone-rgb), 0.45);
+  border-radius: var(--radius);
+  background: rgba(var(--tone-rgb), 0.08);
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.arcade-hook .arcade-link:hover { background: rgba(var(--tone-rgb), 0.16); border-color: rgba(var(--tone-rgb), 0.65); }

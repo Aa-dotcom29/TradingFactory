@@ -13,6 +13,7 @@ import HealthTable from '@/components/HealthTable';
 import PipelineStrip from '@/components/PipelineStrip';
 import ConsensusMeter from '@/components/ConsensusMeter';
 import StatusBanner from '@/components/StatusBanner';
+import ArcadeHook from '@/components/ArcadeHook';
 import { publishSummary } from '@/lib/publish';
 
 export const dynamic = 'force-dynamic';
@@ -115,6 +116,7 @@ export default async function OverviewPage() {
       )}
 
       <PipelineStrip nodes={pipeline} />
+      <ArcadeHook sources={sources} />
 
       <section className="card">
         <h2>House read</h2>

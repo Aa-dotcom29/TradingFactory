@@ -10,6 +10,7 @@ export default function NavTabs() {
     HORIZONS.map((h) => ({ key: h.key, label: h.label, sub: h.blurb, href: `/dashboard/${h.key.toLowerCase()}` })),
   );
   items.push({ key: 'TRADES', label: 'Trades', sub: 'my journal', href: '/dashboard/trades' });
+  items.push({ key: 'ARCADE', label: 'Arcade', sub: 'worker board', href: '/dashboard/arcade' });
   items.push({ key: 'SETTINGS', label: 'Settings', sub: 'household', href: '/dashboard/settings' });
 
   return (
