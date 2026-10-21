@@ -147,46 +147,32 @@ main.wrap, header.rail, nav.tabs, .bulletin { position: relative; z-index: 1; }
 }
 
 /* The tabs become a bordered strip with a dot between each item, which is
-   Textura's menu pattern. The dot is drawn with a border, not a character. */
+   Textura's menu pattern. The strip itself is rebuilt as liquid glass in
+   futurist.css, which owns the tab indicator and the active pill. */
 .tabs {
   background: #000;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  border-bottom: var(--hair) solid var(--hair-ink);
-  padding: 0 14px;
+  border-bottom: none;
+  padding: 0;
   gap: 0;
 }
 
 .tab {
   padding: 13px 15px 14px;
   color: var(--ink-faint);
-  border-right: var(--hair) solid var(--hair-ink);
+  border-right: none;
   position: relative;
 }
 
-.tab:first-child { border-left: var(--hair) solid var(--hair-ink); }
-
 .tab .sub {
-  font-size: 13px;
+  font-size: 12px;
   letter-spacing: 0.1em;
   opacity: 0.72;
 }
 
-.tab::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  right: 50%;
-  bottom: -1px;
-  height: 2px;
-  background: var(--electric);
-  box-shadow: 0 0 14px var(--electric-glow);
-  transition: left 0.24s cubic-bezier(0.2, 0.8, 0.2, 1), right 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
 .tab:hover { background: rgba(255, 255, 255, 0.03); color: var(--ink-dim); }
 .tab.active { color: var(--ink); }
-.tab.active::after { left: 0; right: 0; }
 
 /* -----------------------------------------------------------------------------
    3. The editorial voice
@@ -461,27 +447,41 @@ main.wrap, header.rail, nav.tabs, .bulletin { position: relative; z-index: 1; }
 .bias-row:hover { background: rgba(255, 255, 255, 0.04); }
 .bias-row:focus-within { background: rgba(255, 255, 255, 0.04); }
 
-.bulletin-viewport:hover .bulletin-track { animation-play-state: paused; }
+/* The crawl holds when the pointer is over a headline (see interface.css),
+   and when the reader has pressed the control. It does not stop merely
+   because the mouse is parked at the top of the page. */
 
 /* -----------------------------------------------------------------------------
    7. Scroll reveal
-   Panels rise into place as they enter the viewport. This is the motion
+   Panels rise into place as they enter the viewport. It is the motion
    signature of the reference site, and it is the one that most improves the
    feel of a long scrolling page.
+
+   It is done entirely in CSS, with a scroll-driven animation timeline. An
+   earlier version used an observer to add a class to each panel, which broke
+   hydration: on a streamed page the observer can run before React has
+   hydrated the rest of the tree, and the mutated class name then disagrees
+   with the markup React rendered. The browser can do this on its own, with no
+   DOM mutation at all.
+
+   Where the browser has no scroll-driven timelines, the panels simply appear,
+   which is the correct fallback.
    -------------------------------------------------------------------------- */
 
-.reveal {
-  opacity: 0;
-  transform: translateY(18px);
-  transition: opacity 0.55s cubic-bezier(0.2, 0.75, 0.25, 1), transform 0.55s cubic-bezier(0.2, 0.75, 0.25, 1);
-  will-change: opacity, transform;
+@supports (animation-timeline: view()) {
+  main .stack > *,
+  main section.card,
+  main .grid > * {
+    animation: reveal-rise linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 26%;
+  }
 }
 
-.reveal.is-revealed { opacity: 1; transform: none; }
-
-/* The root layout paints the first screen immediately: a page that starts
-   blank and fades in feels slower, not faster. */
-.reveal.is-first { opacity: 1; transform: none; }
+@keyframes reveal-rise {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: none; }
+}
 
 /* -----------------------------------------------------------------------------
    8. Motion
@@ -495,9 +495,8 @@ html { scroll-behavior: smooth; }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  .reveal { opacity: 1; transform: none; transition: none; }
   .rail::after { animation: none; }
-  .tab::after { transition: none; }
+  .tab::before { transition: none; }
 }
 
 @media (max-width: 640px) {

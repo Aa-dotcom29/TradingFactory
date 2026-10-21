@@ -263,7 +263,301 @@
 }
 
 /* -----------------------------------------------------------------------------
-   6. Motion is opt-out
+   6. Liquid glass tabs
+   The navigation strip is the one chrome element that always sits on the page,
+   so it is the one that earns real material: a floating slab of frosted glass
+   with a lit top edge, a refracted underside, and a raised pill for whatever
+   is active. The aurora pool behind it is what the glass actually refracts, so
+   the effect changes as the page moves.
+   -------------------------------------------------------------------------- */
+
+.tabs {
+  position: relative;
+  z-index: 18;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  width: min(1440px, calc(100% - 36px));
+  margin: 14px auto 0;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 18px;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.03) 42%, rgba(255, 255, 255, 0.06) 100%);
+  backdrop-filter: blur(26px) saturate(180%);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
+    inset 0 0 26px rgba(86, 216, 240, 0.05),
+    0 20px 44px rgba(0, 0, 0, 0.55);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar { display: none; }
+
+.tab {
+  position: relative;
+  flex: none;
+  padding: 11px 17px 12px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--ink-faint);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  transition:
+    color 0.18s ease,
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.tab .sub {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+  opacity: 0.72;
+  margin-top: 1px;
+}
+
+/* The active tab is a raised glass pill sitting in the slab. */
+.tab.active {
+  color: var(--ink);
+  border-color: rgba(255, 255, 255, 0.22);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.06) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.42),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 6px 18px rgba(0, 0, 0, 0.45);
+  transform: translateY(-1px);
+}
+
+.tab:hover:not(.active) {
+  color: var(--ink-dim);
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* A slow specular sweep across the active pill, so the glass reads as a
+   surface catching light rather than a flat fill. The active pill owns the
+   ::after slot for the sheen, so the indicator line lives on ::before. */
+.tab::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  right: 50%;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--electric);
+  box-shadow: 0 0 12px var(--electric-glow);
+  transition: left 0.24s cubic-bezier(0.2, 0.8, 0.2, 1), right 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.tab.active::before { left: 22%; right: 22%; }
+
+.tab.active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 36%, rgba(255, 255, 255, 0.16) 50%, transparent 64%);
+  background-size: 260% 100%;
+  animation: tab-sheen 7s linear infinite;
+}
+
+@keyframes tab-sheen {
+  from { background-position: 190% 0; }
+  to   { background-position: -90% 0; }
+}
+
+/* The strip no longer owns a bottom rule, so the page needs a little air
+   where the glass ends. */
+main.wrap { padding-top: 16px; }
+
+@media (max-width: 900px) {
+  .tabs { width: calc(100% - 20px); margin-top: 10px; border-radius: 15px; }
+  .tab { padding: 10px 13px 11px; }
+}
+
+/* -----------------------------------------------------------------------------
+   7. The news crawl
+   A broadcast crawl, not a line of text: it moves on its own at a readable
+   pace, fades at both ends of the window, and can be held. The speed is
+   constant per headline rather than per page, so a long list does not crawl
+   faster and a short one does not crawl slower.
+   -------------------------------------------------------------------------- */
+
+.bulletin-viewport {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 3%, #000 96%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 3%, #000 96%, transparent);
+}
+
+.bulletin-track {
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.bulletin.is-paused .bulletin-track { animation-play-state: paused; }
+
+.bulletin-control {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-left: 1px solid var(--hair-ink);
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.bulletin-control:hover { color: var(--sig); background: rgba(86, 216, 240, 0.08); }
+.bulletin-control .glyph { font-family: var(--font-mono); font-size: 12px; }
+
+@media (max-width: 900px) {
+  .bulletin-control { padding: 0 9px; font-size: 11px; }
+}
+
+/* -----------------------------------------------------------------------------
+   8. Motion is opt-out
+   -------------------------------------------------------------------------- */
+
+/* -----------------------------------------------------------------------------
+   9. Rounded, embossed panels
+   Every pane in the interface is a milled plate: a generous radius, a lit top
+   edge, a shaded underside, and a real cast shadow. The emboss is what makes a
+   black surface read as a physical object rather than a hole in the page.
+
+   Three radii, used consistently:
+     --radius         a panel or a well
+     --radius-raised  the chrome that floats: tab strip, palette, board
+     --radius-inset   a control inside a panel
+   -------------------------------------------------------------------------- */
+
+:root {
+  --radius: 14px;
+  --radius-raised: 20px;
+  --radius-inset: 10px;
+  --emboss-top: inset 0 1px 0 rgba(255, 255, 255, 0.085);
+  --emboss-bottom: inset 0 -1px 0 rgba(0, 0, 0, 0.55);
+}
+
+/* The panels. */
+.card,
+.details.collapsible,
+.arcade-hook,
+.sig-archive,
+.banner-hud,
+.empty,
+.stat-row,
+.table-scroll,
+.sig-confirm,
+.tf-align,
+.drawer-levels,
+.drawer-components,
+.drawer-feature {
+  border-radius: var(--radius);
+}
+
+/* The chrome that floats above the page. */
+.cmdk,
+.arcade-board-scroll,
+.tabs {
+  border-radius: var(--radius-raised);
+}
+
+/* The drawer is anchored to the right edge, so only its outer corners round. */
+.drawer { border-radius: var(--radius-raised) 0 0 var(--radius-raised); }
+
+/* Controls inside a panel. */
+input[type="email"],
+input[type="password"],
+input[type="text"],
+select,
+.meter {
+  border-radius: var(--radius-inset);
+}
+
+/* The emboss itself: a lit top edge, a shaded underside, and a cast shadow. */
+.card,
+.details.collapsible,
+.arcade-hook,
+.sig-archive,
+.banner-hud,
+.empty {
+  box-shadow:
+    var(--emboss-top),
+    var(--emboss-bottom),
+    0 18px 46px rgba(0, 0, 0, 0.5);
+}
+
+.card:hover,
+.details.collapsible:hover {
+  box-shadow:
+    var(--emboss-top),
+    var(--emboss-bottom),
+    0 24px 58px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(86, 216, 240, 0.07);
+}
+
+/* The corner brackets now follow the curve of the panel instead of squaring
+   it off. */
+.card::before {
+  top: 0;
+  left: 0;
+  border-top-left-radius: 13px;
+}
+
+.card::after {
+  right: 0;
+  bottom: 0;
+  border-bottom-right-radius: 13px;
+}
+
+/* The banner's neon rule is inset so it does not square off the rounded
+   corners. */
+.banner-hud::before {
+  left: 14px;
+  right: 14px;
+  border-radius: 2px;
+}
+
+/* A nested well is one step in from the panel. */
+.stat-row,
+.sig-confirm,
+.drawer-levels,
+.drawer-components {
+  overflow: hidden;
+}
+
+/* The stat tiles inside a row are clipped by the row's radius. */
+.stat-row { background: var(--hair-ink); border-color: var(--hair-ink); }
+.stat { background: #080b0f; }
+.stat:hover { background: #0c1116; }
+
+/* The table well keeps its scroll but gains a frame. */
+.table-scroll {
+  border: 1px solid var(--hair-ink);
+  background: #05070a;
+}
+
+/* -----------------------------------------------------------------------------
+   10. Motion is opt-out
    -------------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {

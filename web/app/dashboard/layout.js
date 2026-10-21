@@ -11,7 +11,6 @@ import HeartbeatStrip from '@/components/HeartbeatStrip';
 import CommandPalette from '@/components/CommandPalette';
 import ThemeToggle from '@/components/ThemeToggle';
 import NewsBulletin from '@/components/NewsBulletin';
-import ScrollReveal from '@/components/ScrollReveal';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,8 +75,6 @@ export default async function DashboardLayout({ children }) {
         )}
         {children}
       </main>
-
-      <ScrollReveal />
     </>
   );
 }

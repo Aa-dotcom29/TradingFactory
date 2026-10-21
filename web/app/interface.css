@@ -348,7 +348,13 @@ body {
   animation: bulletin-scroll 64s linear infinite;
 }
 
-.bulletin-viewport:hover .bulletin-track { animation-play-state: paused; }
+/* The crawl holds only when the pointer is over a headline the reader might
+   want to click. Pausing on the whole strip meant that simply resting the
+   mouse near the top of the page stopped the crawl, which is exactly the
+   "manual" feeling this is supposed to avoid. */
+.bulletin-viewport:has(.bulletin-item:hover) .bulletin-track {
+  animation-play-state: paused;
+}
 
 @keyframes bulletin-scroll {
   from { transform: translateX(0); }
@@ -1180,8 +1186,9 @@ body {
   .hb-led { opacity: 1; }
   body::after, body::before, .rail::after { animation: none; }
   .card > h2, .arcade-head h2, .page-head h1, .collapsible-title { animation: none; }
-  .bulletin-track { animation: none; }
-  .bulletin-viewport { overflow-x: auto; }
+  /* The crawl is not disabled here: the component starts it held under
+     reduced motion, and the reader can start it from the control if they
+     want it. Killing the animation outright would make that control a lie. */
   .cmdk, .drawer { animation: none; }
   * { transition: none !important; }
 }
