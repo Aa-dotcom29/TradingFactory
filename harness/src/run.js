@@ -204,6 +204,12 @@ async function main() {
     scoreMs: config.poll.scoreMs,
     heartbeatMs: config.poll.heartbeatMs,
   });
+
+  // A long-lived socket worker owns no interval timers: the socket carries the pipeline and
+  // refreshes its own subscriptions. Without at least one kept-alive handle the process falls
+  // straight back to an empty event loop and exits after the log line above, exactly as the
+  // W9-only role just demonstrated. One harmless interval is enough.
+  if (!timers.length) timers.push(setInterval(() => {}, 1 << 30));
 }
 
 main().catch(async (error) => {
