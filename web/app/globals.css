@@ -961,15 +961,19 @@ input:focus, select:focus { outline: none; border-color: var(--sig); box-shadow:
 }
 
 /* =============================================================================
-   Agent Arcade - the whole harness on one animated board
+   Agent Arcade - the whole harness on one animated circuit board
    -----------------------------------------------------------------------------
-   Every worker is one node on a two-lane board: the main decision pipeline
-   (W0..W7) and the support lanes (W8 supervision, W9 live tape). A small beat
-   dot on each node pulses in board order on a shared clock, so the wave travels
-   Worker 0 -> Worker 9 and loops - a continuous read of "the machine is alive".
-   The beat inherits the node's status colour, so a failing worker pulses red
-   instead of green and the glance still tells the truth. Pure CSS: no JS in the
-   animation path, and reduced-motion users get a still board with the same info.
+   The board is a single SVG: ten worker modules (glyph, id, name, status LED)
+   wired in run order W0 -> W7 with the support lanes (W9 tape, W8 supervisor)
+   underneath. Four independent CSS animations carry the "system is alive" read:
+     1. a-ecg       an ECG trace across the top, marching dashes + a pulse dot
+     2. a-rail-live marching dashes along every rail, staggered per rail
+     3. a-packet    data packets traveling each rail, staggered down the chain
+     4. a-ring      an expanding ring around each status LED, delayed by index
+   Every animation is pure CSS - no JS in the path - and prefers-reduced-motion
+   stops all of them while leaving the board fully legible. The tone classes
+   (.tone-up/warn/down/muted) drive currentColor, so the same palette that
+   colors text pills colors the glyphs, LEDs and the whole heartbeat.
    ============================================================================= */
 
 .arcade-head {
@@ -983,132 +987,217 @@ input:focus, select:focus { outline: none; border-color: var(--sig); box-shadow:
 .arcade-head h2 { margin-bottom: 4px; }
 .arcade-totals { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 
-.arcade-board { display: flex; flex-direction: column; gap: 14px; }
-
-.arcade-lane .lane-label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
-  font-family: var(--font-display);
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-.arcade-lane .lane-label .arrow-hint {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  color: var(--ink-faint);
-  opacity: 0.75;
-}
-
-.arcade-strip {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 1px;
-  background: var(--rule);
+/* Horizontally scrollable wrapper: the SVG keeps its aspect ratio and the
+   board stays readable on narrow screens instead of crushing the modules. */
+.arcade-board-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--rule);
   border-radius: var(--radius);
-  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 15% 0%, rgba(var(--tone-rgb), 0.05), transparent 60%),
+    linear-gradient(180deg, var(--hull-2) 0%, var(--hull) 100%);
+  padding: 4px 0;
 }
-.arcade-strip .node {
-  position: relative;
-  background: var(--hull);
-  padding: 11px 12px 12px 26px;
-  overflow: hidden;
-  transition: background 0.3s ease;
-}
-/* The connector: same arrowhead language as the pipeline strip. */
-.arcade-strip .node:not(:last-child)::after {
-  content: '';
-  position: absolute;
-  right: -1px;
-  top: 50%;
-  width: 0;
-  height: 0;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 5px solid var(--rule-hi);
-  transform: translateY(-50%);
-  z-index: 2;
+.arcade-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-width: 720px;
+  font-family: var(--font-mono);
 }
 
-.arcade-strip .node .id {
-  font-family: var(--font-mono);
+/* --- worker modules ------------------------------------------------------ */
+.arc-node .a-card {
+  fill: var(--hull);
+  stroke: var(--rule-hi);
+  stroke-width: 1;
+}
+.arc-node .a-accent { fill: currentColor; opacity: 0.75; }
+.arc-node.tone-warn .a-card { stroke: rgba(255, 181, 71, 0.55); }
+.arc-node.tone-down .a-card { stroke: rgba(255, 93, 82, 0.65); }
+.arc-node.tone-down { filter: drop-shadow(0 0 10px rgba(255, 93, 82, 0.25)); }
+
+.arc-node .a-id {
   font-size: 10px;
   letter-spacing: 0.1em;
-  color: var(--ink-faint);
+  fill: var(--ink-faint);
 }
-.arcade-strip .node .name {
-  font-size: 11px;
+.arc-node .a-name {
+  font-family: var(--font-display);
+  font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.12em;
+  fill: var(--ink);
+}
+.arc-node .a-status {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  fill: currentColor;
+}
+.arc-node .a-glyph { color: currentColor; }
+.arc-node .a-glyph path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+}
+
+/* The LED and its expanding ring. Ring delay follows run order, so the pulse
+   travels module by module around the board. */
+.arc-node .a-led { fill: currentColor; }
+.arc-node .a-ring {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: arcade-ring 2.6s ease-out infinite;
+}
+
+/* --- tones ----------------------------------------------------------------
+   Each module carries its own worker tone; rails and the ECG inherit the
+   board-level tone from the <svg> root class. */
+.arc-node { color: var(--ink-faint); }
+.arc-node.tone-up { color: var(--up); }
+.arc-node.tone-warn { color: var(--warn); }
+.arc-node.tone-down { color: var(--down); }
+.arc-node.tone-muted { color: var(--ink-faint); }
+
+/* --- clickable modules ----------------------------------------------------
+   Every module is an SVG anchor to that worker's dossier page. The whole card
+   is the hit area; hover/focus lifts the card and reveals the OPEN tag. */
+.arcade-svg a { cursor: pointer; outline: none; }
+.arc-node .a-open {
+  font-size: 8px;
   letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
-  margin-top: 3px;
+  fill: currentColor;
+  opacity: 0;
+  transition: opacity 0.15s ease;
 }
-.arcade-strip .node .blurb { margin-top: 3px; line-height: 1.35; }
-.arcade-strip .node .meta { margin-top: 8px; }
-.arcade-strip .node .detail {
-  margin-top: 6px;
-  font-size: 10.5px;
-  line-height: 1.35;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.arcade-svg a:hover .a-open,
+.arcade-svg a:focus-visible .a-open { opacity: 0.85; }
+.arcade-svg a:hover .a-card,
+.arcade-svg a:focus-visible .a-card {
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+.arcade-svg a:focus-visible .a-card {
+  stroke-dasharray: 4 3;
+}
+.arcade-svg a:hover .a-glyph,
+.arcade-svg a:focus-visible .a-glyph { opacity: 1; }
+.arc-link { color: inherit; text-decoration: none; }
+.arc-link:hover { text-decoration: underline; }
+
+.arcade-svg .a-rail {
+  fill: none;
+  stroke: var(--rule-hi);
+  stroke-width: 1.4;
+}
+.arcade-svg .a-rail-live {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-dasharray: 7 11;
+  stroke-linecap: round;
+  opacity: 0.7;
+  animation: arcade-march 1.4s linear infinite;
+}
+.arcade-svg { color: var(--sig); }
+.arcade-svg.tone-up { color: var(--up); }
+.arcade-svg.tone-warn { color: var(--warn); }
+.arcade-svg.tone-down { color: var(--down); }
+.arcade-svg.tone-muted { color: var(--ink-faint); }
+
+.arcade-svg .a-packet {
+  fill: currentColor;
+  offset-rotate: 0deg;
+  filter: drop-shadow(0 0 4px currentColor);
+  animation: arcade-packet 1.8s linear infinite;
+}
+.arcade-svg .a-ecg-dot { animation-duration: 3.6s; }
+
+.arcade-svg .a-cap {
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  fill: var(--ink-faint);
+}
+.arcade-svg .a-rail-label {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  fill: var(--ink-dim);
+  text-anchor: middle;
 }
 
-/* The beat: a small dot whose pulse is delayed by its place in the run order.
-   Shared clock, per-index offset - one wave, continuous, forever. */
-.arcade-strip .node .beat {
-  position: absolute;
-  left: 10px;
-  top: 50%;
-  width: 8px;
-  height: 8px;
-  margin-top: -4px;
-  border-radius: 50%;
-  background: var(--ink-faint);
-  opacity: 0.45;
-  animation: arcade-beat 4.4s infinite ease-in-out;
-  animation-delay: calc(var(--i, 0) * 0.4s);
-}
-.arcade-strip .node.lane-up .beat { background: var(--up); }
-.arcade-strip .node.lane-warn .beat { background: var(--warn); }
-.arcade-strip .node.lane-down .beat { background: var(--down); }
-.arcade-strip .node.lane-muted .beat { background: var(--ink-faint); }
-
-.arcade-strip .node.lane-warn { border-left: 2px solid var(--warn); }
-.arcade-strip .node.lane-down { border-left: 2px solid var(--down); box-shadow: inset 0 0 24px rgba(255, 93, 82, 0.08); }
-.arcade-lane.lane-support .arcade-strip .node {
-  background: linear-gradient(180deg, var(--hull-2) 0%, var(--hull) 100%);
+/* --- system pulse -------------------------------------------------------- */
+.arcade-svg .a-ecg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-dasharray: 5 7;
+  opacity: 0.85;
+  animation: arcade-march 1.6s linear infinite;
 }
 
-@keyframes arcade-beat {
-  0%, 12%, 88%, 100% {
-    transform: scale(1);
-    opacity: 0.45;
-    box-shadow: none;
-  }
-  4% {
-    transform: scale(2);
-    opacity: 1;
-    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.06);
-  }
-  8% {
-    transform: scale(1.35);
-    opacity: 0.75;
-  }
+@keyframes arcade-march {
+  to { stroke-dashoffset: -18; }
+}
+@keyframes arcade-packet {
+  0% { offset-distance: 0%; opacity: 0; }
+  8% { opacity: 1; }
+  92% { opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0; }
+}
+@keyframes arcade-ring {
+  0% { transform: scale(1); opacity: 0.8; }
+  70% { transform: scale(4); opacity: 0; }
+  100% { transform: scale(4); opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .arcade-strip .node .beat { animation: none; opacity: 0.75; transform: scale(1.25); }
+  .arcade-svg .a-rail-live,
+  .arcade-svg .a-ecg,
+  .arcade-svg .a-packet { animation: none; }
+  .arcade-svg .a-packet { opacity: 1; offset-distance: 50%; }
+  .arc-node .a-ring { animation: none; opacity: 0.45; transform: scale(2); }
 }
 
+/* --- report and legend --------------------------------------------------- */
 .arcade-report { margin-top: 16px; }
+/* Keep every report row the same height: the source list grows for W0 and
+   would otherwise stretch its row over six lines. The wrapper scrolls. */
+.arcade-report td:last-child { white-space: nowrap; }
+
+.arcade-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+}
+.arcade-legend .lg { display: inline-flex; align-items: center; gap: 7px; }
+.arcade-legend .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+}
+.arcade-legend .dot.up { background: var(--up); }
+.arcade-legend .dot.warn { background: var(--warn); }
+.arcade-legend .dot.down { background: var(--down); }
+.arcade-legend .dot.muted { background: var(--ink-faint); opacity: 0.7; }
+.arcade-legend .wire {
+  width: 22px;
+  height: 2px;
+  background: repeating-linear-gradient(90deg, var(--sig) 0 6px, transparent 6px 11px);
+}
 
 .arcade-hook .arcade-link {
   display: inline-flex;

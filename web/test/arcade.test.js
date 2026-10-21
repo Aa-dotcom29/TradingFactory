@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildArcadeWorkers, WORKERS, statusTone, arcadeTotals } from '../lib/arcade.js';
+import { buildArcadeWorkers, WORKERS, statusTone, arcadeTotals, BOARD, BOARD_W, BOARD_H, NODE_W, NODE_H } from '../lib/arcade.js';
 
 const row = (source, status, detail = '', checked_at = '2026-10-21T12:00:00.000Z') => (
   { source, status, detail, checked_at }
@@ -84,4 +84,28 @@ test('arcadeTotals counts every worker exactly once', () => {
   const totals = arcadeTotals(workers);
   assert.equal(totals.up + totals.warn + totals.down + totals.muted, WORKERS.length);
   assert.equal(totals.muted, WORKERS.length);
+});
+
+test('board geometry places every worker inside the canvas without overlap', () => {
+  for (const w of WORKERS) {
+    assert.ok(BOARD[w.id], `${w.id} has a board position`);
+  }
+  assert.equal(Object.keys(BOARD).length, WORKERS.length);
+
+  const boxes = WORKERS.map((w) => {
+    const { x, y } = BOARD[w.id];
+    assert.ok(x >= 0 && y >= 0, `${w.id} origin is on-canvas`);
+    assert.ok(x + NODE_W <= BOARD_W, `${w.id} fits horizontally`);
+    assert.ok(y + NODE_H <= BOARD_H, `${w.id} fits vertically`);
+    return { id: w.id, x1: x, y1: y, x2: x + NODE_W, y2: y + NODE_H };
+  });
+
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const a = boxes[i];
+      const b = boxes[j];
+      const separate = a.x2 <= b.x1 || b.x2 <= a.x1 || a.y2 <= b.y1 || b.y2 <= a.y1;
+      assert.ok(separate, `${a.id} and ${b.id} must not overlap`);
+    }
+  }
 });

@@ -19,13 +19,33 @@ export const WORKERS = [
   { id: 'W9', name: 'Tape', blurb: 'live prints and broker book depth', sources: ['angel-tape'], terminal: false },
 ];
 
-// MAIN carries the decision pipeline left to right. SUPPORT holds the two
-// long-running lanes: W9 feeds prints and depth into evaluation and the trade
-// workspace, W8 watches every lane rather than sitting on the chain itself.
-export const LANES = [
-  { key: 'main', label: 'Main pipeline', workers: ['W0', 'W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7'] },
-  { key: 'support', label: 'Support lanes', workers: ['W8', 'W9'] },
-];
+// Board geometry for the SVG circuit: two rows of four for the main chain,
+// with the two support lanes underneath. Positions are data, not magic
+// numbers in JSX, so the layout stays testable and the nodes never overlap.
+export const BOARD = {
+  W0: { x: 30, y: 56 }, W1: { x: 230, y: 56 }, W2: { x: 430, y: 56 }, W3: { x: 630, y: 56 },
+  W4: { x: 30, y: 196 }, W5: { x: 230, y: 196 }, W6: { x: 430, y: 196 }, W7: { x: 630, y: 196 },
+  W9: { x: 230, y: 336 }, W8: { x: 630, y: 336 },
+};
+export const BOARD_W = 840;
+export const BOARD_H = 444;
+export const NODE_W = 160;
+export const NODE_H = 88;
+
+// Line-art glyphs, 24x24, one per worker so every lane is recognisable at a
+// glance without reading the label. Shared by the board and the detail page.
+export const GLYPHS = {
+  W0: ['M3 4h18l-7 8v7l-4-2v-5z'], // funnel - ingest
+  W1: ['M6 3h8l4 4v14H6z', 'M14 3v4h4', 'M9 12h6', 'M9 16h6'], // document - news
+  W2: ['M3 9c2.5-2.5 5 2.5 7.5 0S16 4 21 9', 'M3 15c2.5-2.5 5 2.5 7.5 0S16 10 21 15'], // waves - flow
+  W3: ['M4 18a8 8 0 0 1 16 0', 'M12 18l5-5', 'M11 18h2'], // gauge - bias
+  W4: ['M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4z'], // spark - signal
+  W5: ['M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z', 'M8.5 12l2.5 2.5 4.5-5'], // shield - risk
+  W6: ['M21 3L3 10.5l7 2.5 2.5 7z', 'M21 3l-11 10.5'], // paper plane - publish
+  W7: ['M12 4a8 8 0 1 0 .01 0', 'M12 8a4 4 0 1 0 .01 0', 'M12 12h.01'], // target - evaluate
+  W8: ['M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z', 'M12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5'], // eye - supervise
+  W9: ['M6 5v14', 'M6 9h3v6H6z', 'M13 3v18', 'M13 7h3v9h-3z', 'M20 8v8'], // candles - tape
+};
 
 const STATUS_RANK = {
   ERROR: 0,
