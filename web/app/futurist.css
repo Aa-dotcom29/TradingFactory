@@ -25,8 +25,10 @@
   --neon-a: #2f4bff;
   --neon-b: #00d4ff;
   --neon-c: #7a5cff;
-  --hud-ink: rgba(255, 255, 255, 0.42);
-  --hud-rule: rgba(255, 255, 255, 0.09);
+  /* The HUD strip is instrument text: it has to be read at a glance, so it
+     sits on the full ink, not on a tint of it. */
+  --hud-ink: rgba(255, 255, 255, 0.74);
+  --hud-rule: rgba(255, 255, 255, 0.14);
 }
 
 /* -----------------------------------------------------------------------------
@@ -113,7 +115,7 @@
 
 .hud-cell:first-child { padding-left: 12px; }
 
-.hud-key { color: rgba(255, 255, 255, 0.3); }
+.hud-key { color: rgba(255, 255, 255, 0.56); }
 
 .hud-id { color: var(--ink-dim); }
 
@@ -546,14 +548,14 @@ select,
 }
 
 /* The stat tiles inside a row are clipped by the row's radius. */
-.stat-row { background: var(--hair-ink); border-color: var(--hair-ink); }
-.stat { background: #080b0f; }
-.stat:hover { background: #0c1116; }
+.stat-row { background: rgba(255, 255, 255, 0.13); border-color: rgba(255, 255, 255, 0.13); }
+.stat { background: #0b1117; }
+.stat:hover { background: #101820; }
 
 /* The table well keeps its scroll but gains a frame. */
 .table-scroll {
   border: 1px solid var(--hair-ink);
-  background: #05070a;
+  background: #070b10;
 }
 
 /* -----------------------------------------------------------------------------

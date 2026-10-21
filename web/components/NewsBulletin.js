@@ -79,7 +79,6 @@ export default function NewsBulletin({ items = [] }) {
   if (!live.length) {
     return (
       <div className="bulletin" aria-label="News bulletin">
-        <span className="bulletin-label">Bulletin</span>
         <span className="bulletin-empty">No scored headlines in the last fourteen days.</span>
       </div>
     );
@@ -87,7 +86,6 @@ export default function NewsBulletin({ items = [] }) {
 
   return (
     <div className={`bulletin${paused ? ' is-paused' : ''}`} aria-label="News bulletin">
-      <span className="bulletin-label">Bulletin</span>
       <div className="bulletin-viewport">
         <div
           className="bulletin-track"
@@ -102,6 +100,7 @@ export default function NewsBulletin({ items = [] }) {
         className="bulletin-control"
         onClick={() => setPaused((value) => !value)}
         aria-pressed={paused}
+        aria-label={paused ? 'Resume the news crawl' : 'Hold the news crawl'}
         title={paused ? 'Resume the crawl' : 'Hold the crawl'}
       >
         <span className="glyph" aria-hidden="true">{paused ? '>' : '||'}</span>

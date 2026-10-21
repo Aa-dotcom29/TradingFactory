@@ -87,14 +87,26 @@ main.wrap, header.rail, nav.tabs, .bulletin { position: relative; z-index: 1; }
    2. Surfaces - flat black with a hairline, not glass
    -------------------------------------------------------------------------- */
 
+/* The panels are not holes in the page. Each one is a plate that is lifted
+   off the black canvas, so the text on it has something to sit on and the
+   emboss reads as a real edge. */
 .card,
 .details.collapsible,
 .arcade-hook,
-.sig-archive,
+.sig-archive {
+  background: linear-gradient(180deg, #0c1219 0%, #070b10 100%);
+  background-image: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: var(--hair) solid var(--hair-ink);
+  box-shadow: none;
+  border-radius: 2px;
+}
+
+/* The two surfaces that leave the black world are lifted further still. */
 .cmdk,
 .drawer {
-  background: #05070a;
-  background-image: none;
+  background: linear-gradient(180deg, #121a23 0%, #080d13 100%);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   border: var(--hair) solid var(--hair-ink);
@@ -168,7 +180,7 @@ main.wrap, header.rail, nav.tabs, .bulletin { position: relative; z-index: 1; }
 .tab .sub {
   font-size: 12px;
   letter-spacing: 0.1em;
-  opacity: 0.72;
+  opacity: 0.92;
 }
 
 .tab:hover { background: rgba(255, 255, 255, 0.03); color: var(--ink-dim); }
@@ -371,20 +383,8 @@ main.wrap, header.rail, nav.tabs, .bulletin { position: relative; z-index: 1; }
   height: 36px;
 }
 
-.bulletin-label {
-  background: var(--electric);
-  color: #ffffff;
-  border-right: none;
-  font-size: 12px;
-  letter-spacing: 0.22em;
-  padding: 0 16px;
-}
-
-.bulletin-label::before {
-  background: #ffffff;
-  box-shadow: 0 0 10px rgba(255, 255, 255, 0.9);
-}
-
+/* The bulletin has no label block: the crawl is the whole element, and the
+   control on the right says whether it is moving. */
 .bulletin-item { border-right-color: var(--hair-ink); }
 .bulletin-item a { color: var(--ink-dim); }
 .bulletin-item a:hover { color: #fff; }

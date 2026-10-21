@@ -35,13 +35,39 @@ html, body { font-size: 16px; }
 .tick { font-size: 15px; }
 
 /* A stat label is a legend key. It must never be clipped to an ellipsis:
-   a truncated label is a label the reader cannot read. */
+   a truncated label is a label the reader cannot read. The tracking is
+   tightened so a long key still fits on one line and the row stays aligned. */
 .stat .k {
   font-size: 13px;
+  letter-spacing: 0.08em;
   white-space: normal;
   overflow: visible;
   text-overflow: clip;
   line-height: 1.3;
+}
+
+/* -----------------------------------------------------------------------------
+   1a. Legibility
+   The three ink steps are the difference between text you read and text you
+   squint at. The base palette was tuned for a slightly lighter hull; on the
+   black canvas the darkest step fell under 4.5:1, and several places
+   multiplied that by a further opacity, which compounds into mush.
+
+   The steps are lifted here so every label, caption and timestamp in the
+   interface clears AA comfortably, and the compound opacities that were
+   double-dimming the faint step are removed.
+   -------------------------------------------------------------------------- */
+
+:root {
+  --ink: #eef4f7;
+  --ink-dim: #c3d3dc;
+  --ink-faint: #9db1bd;
+}
+
+:root[data-theme="dim"] {
+  --ink: #cddae2;
+  --ink-dim: #aebec8;
+  --ink-faint: #8b9ca7;
 }
 .evidence-kv { font-size: 15px; }
 .evidence-kv dt { font-size: 13px; }
@@ -319,7 +345,7 @@ body {
   background: linear-gradient(90deg, rgba(86, 216, 240, 0.18), rgba(86, 216, 240, 0.05));
   border-right: 1px solid rgba(86, 216, 240, 0.2);
   color: var(--sig);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.2em;
   text-transform: uppercase;
