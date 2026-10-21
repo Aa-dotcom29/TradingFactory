@@ -14,14 +14,16 @@
 // they have reported SKIPPED on every single evaluation, because `outcomes` was always empty.
 // W7 is what fills it.
 //
-// Three things W7 deliberately does not do:
+// Things W7 deliberately does not do:
 //
 //   * It never scores an option-premium plan against the underlying price. The plan's levels are
-//     premiums and spot readings are not premiums, so such a pair is refused outright. Since
-//     Slice 8 W0 persists each held option's own premium series, so an option plan is scored
-//     against that; until a reading exists it is reported as awaiting a price source, and once its
-//     window elapses it settles with no verdict - so it neither invents a return nor stays open
-//     forever.
+//     premiums and spot readings are not premiums, so such a pair is refused outright. An option
+//     plan is scored against its own premium series, read from the broker quote features first,
+//     then the live tape, then the NSE OI snapshot. If none exists after a short grace window it
+//     settles with no verdict - so it neither invents a return nor stays open for the whole
+//     holding period.
+//   * It never evaluates a signal that is no longer actionable. A voided signal, or one written
+//     under a retired risk config, is excluded from the open ledger by `active_signals`.
 //   * It does not trust the storage time of a quote. A quote is dated by the market timestamp it
 //     carries, so a Friday close re-stored on Monday cannot masquerade as fresh momentum.
 //   * It does not apply a config change. It may propose one, written as a `candidate` row in
@@ -111,16 +113,16 @@ class EvaluateWorker {
     return resolved;
   }
 
-  // The open ledger: every published signal that has no outcome yet, oldest first. This is the
-  // durable path and the source of truth - the queue only ever tells W7 to look again.
+  // The open ledger: every published signal that has no outcome yet and is still actionable,
+  // oldest first. `active_signals` excludes voided signals and signals written under a risk
+  // config that is not approved, so an administrative void cannot be scored later by a replay.
+  // This is the durable path and the source of truth - the queue only ever tells W7 to look again.
   async loadOpenSignals(limit) {
     const sql = this.sql;
     return sql`
       select s.id, s.horizon, s.symbol, s.direction, s.instrument, s.strike, s.option_type,
              s.entry, s.target, s.stop, s.published_at, s.snapshot
-      from signals s
-      left join outcomes o on o.signal_id = s.id
-      where o.id is null
+      from active_signals s
       order by s.published_at asc
       limit ${limit}
     `;
@@ -131,7 +133,7 @@ class EvaluateWorker {
     const rows = await sql`
       select id, horizon, symbol, direction, instrument, strike, option_type,
              entry, target, stop, published_at, snapshot
-      from signals
+      from active_signals
       where id = ${id}::uuid
     `;
     return rows[0] || null;
@@ -142,10 +144,11 @@ class EvaluateWorker {
   // register as a fresh level breach, so the quote's own clock wins.
   //
   // Which series to read depends on the plan. An option-premium plan is judged against that
-  // option's own premium history (`option.quote.v1`, keyed by the contract), everything else
-  // against the underlying quote history. A contract that cannot be identified yields an empty
-  // path, so the position is parked as awaiting a price source rather than silently scored against
-  // the wrong instrument.
+  // option's own premium history, tried in order: the broker quote features W0 writes
+  // (`option.quote.v1`), the live broker tape W9 writes (`tape_ticks`), then the NSE OI snapshot
+  // (`oi_spurts`). Everything else is judged against the underlying quote history. A contract that
+  // cannot be identified yields an empty path, so the position is parked as awaiting a price
+  // source rather than silently scored against the wrong instrument.
   //
   // The chosen series' high and low are the *day's* range and are deliberately not passed on: a
   // daily high is not a bar, and treating it as one would report the target as hit on the open.
@@ -162,8 +165,10 @@ class EvaluateWorker {
         optionType: signal.option_type,
       });
       if (!key) {
-        return { source, path: [], contractKey: null, reason: 'the option contract could not be identified' };
+        return { source, path: [], contractKey: null, series: null, reason: 'the option contract could not be identified' };
       }
+
+      // 1. The broker quote series W0 writes for held option plans.
       const path = await sql`
         select coalesce((f.values ->> 'quoteTime')::timestamptz, f.as_of) as at,
                (f.values ->> 'ltp') as price
@@ -173,7 +178,54 @@ class EvaluateWorker {
           and f.as_of >= ${signal.published_at}
         order by at asc
       `;
-      return { source, path, contractKey: key };
+      if (path.length) {
+        return { source, path, contractKey: key, series: source };
+      }
+
+      // 2. The live broker tape. W9 subscribes to open option plans and stores the premium
+      //    under the same canonical contract key, so this is a real traded premium.
+      const tapePath = await sql`
+        select captured_at as at, ltp as price
+        from tape_ticks
+        where contract = ${key}
+          and captured_at >= ${signal.published_at}
+          and ltp is not null
+        order by captured_at asc
+      `;
+      if (tapePath.length) {
+        return { source, path: tapePath, contractKey: key, series: 'tape_ticks' };
+      }
+
+      // 3. The NSE OI snapshot. It is a five-minute poll rather than a tick, but its `price`
+      //    column is the option premium, which is the series the plan levels are written on.
+      const optionType = String(signal.option_type || '').toUpperCase();
+      const expiry = plan && plan.expiry;
+      if ((optionType === 'CE' || optionType === 'PE') && expiry) {
+        const side = optionType === 'PE' ? 'Put' : 'Call';
+        const oiPath = await sql`
+          select captured_at as at, price
+          from oi_spurts
+          where scope = 'CONTRACT'
+            and symbol = ${signal.symbol}
+            and strike = ${signal.strike}
+            and option_type = ${side}
+            and expiry = ${expiry}
+            and captured_at >= ${signal.published_at}
+            and price is not null
+          order by captured_at asc
+        `;
+        if (oiPath.length) {
+          return { source, path: oiPath, contractKey: key, series: 'oi_spurts' };
+        }
+      }
+
+      return {
+        source,
+        path: [],
+        contractKey: key,
+        series: null,
+        reason: 'no option premium print since publication',
+      };
     }
 
     const path = await sql`
@@ -185,7 +237,7 @@ class EvaluateWorker {
         and f.as_of >= ${signal.published_at}
       order by at asc
     `;
-    return { source, path };
+    return { source, path, series: source };
   }
 
   async latestEventState(signalId) {
@@ -212,6 +264,7 @@ class EvaluateWorker {
       engineVersion: ENGINE_VERSION,
       configVersion,
       priceSource: evaluation.priceSource || null,
+      priceSeries: evaluation.priceSeries || null,
       result: evaluation.result,
       // The side the position was judged on, which is not always the market view: a bought put is
       // long premium. Recorded so an outcome can be read back without re-deriving it.
@@ -222,6 +275,7 @@ class EvaluateWorker {
       heldMinutes: evaluation.heldMinutes,
       heldDays: evaluation.heldDays,
       windowDays: evaluation.windowDays,
+      graceHours: evaluation.graceHours ?? null,
       entry: evaluation.entry,
       target: evaluation.target,
       stop: evaluation.stop,
@@ -271,7 +325,9 @@ class EvaluateWorker {
       },
       path: loaded.path,
       priceSource: loaded.source,
+      priceSeries: loaded.series,
       holdingDays,
+      unpricedGraceHours: config.evaluate.unpricedGraceHours,
       now: Date.now(),
     });
 
@@ -283,6 +339,15 @@ class EvaluateWorker {
 
     if (evaluation.status !== STATUS.CLOSED) {
       return { status: evaluation.status, reason: evaluation.reason, signal: signal.id };
+    }
+
+    // A signal can be voided while a pass is in flight. Re-check the actionable view before
+    // writing an outcome, so an administrative decision cannot be overwritten by a late scan.
+    const stillActive = await this.sql`
+      select 1 from active_signals where id = ${signal.id}::uuid limit 1
+    `;
+    if (!stillActive.length) {
+      return { status: 'IGNORED', reason: 'signal is no longer actionable', signal: signal.id };
     }
 
     const written = await this.recordOutcome(signal, evaluation, configVersion);
@@ -334,7 +399,7 @@ class EvaluateWorker {
     const limit = options.limit || this.maxPerRun;
     const { version } = await this.ensureConfig();
     const summary = {
-      considered: 0, closed: 0, open: 0, awaiting: 0, unevaluable: 0, failed: 0,
+      considered: 0, closed: 0, open: 0, awaiting: 0, unevaluable: 0, ignored: 0, failed: 0,
     };
     if (!sql) return summary;
 
@@ -357,6 +422,8 @@ class EvaluateWorker {
         } else if (result.status === STATUS.UNEVALUABLE) {
           summary.unevaluable += 1;
           this.noteUnevaluable(result.signal, result.reason);
+        } else if (result.status === 'IGNORED') {
+          summary.ignored += 1;
         } else {
           this.clearUnevaluable(row.id, result.status);
           summary.open += 1;
@@ -444,7 +511,7 @@ class EvaluateWorker {
     if (!signalId) return { status: 'ignored', reason: 'message carried no signal id' };
 
     const signal = await this.loadSignal(signalId);
-    if (!signal) return { status: 'ignored', reason: 'signal no longer exists' };
+    if (!signal) return { status: 'ignored', reason: 'signal no longer exists or is not actionable' };
 
     const { version } = await this.ensureConfig();
     return this.evaluateSignal(signal, version);
@@ -501,6 +568,7 @@ class EvaluateWorker {
         summary.closed += evaluated.closed;
         summary.awaiting = evaluated.awaiting;
         summary.unevaluable = evaluated.unevaluable;
+        summary.ignored = (summary.ignored || 0) + evaluated.ignored;
         summary.failed = evaluated.failed;
 
         const stats = await this.scorecard();
@@ -523,7 +591,8 @@ class EvaluateWorker {
 
     const detail = `${summary.closed || 0} closed of ${summary.open || 0} open`
       + `${summary.awaiting ? `, ${summary.awaiting} awaiting a price source` : ''}`
-      + `${summary.unevaluable ? `, ${summary.unevaluable} unevaluable` : ''}`;
+      + `${summary.unevaluable ? `, ${summary.unevaluable} unevaluable` : ''}`
+      + `${summary.ignored ? `, ${summary.ignored} no longer actionable` : ''}`;
     if (summary.failed) {
       await this.markSource('evaluator', 'WARNING', `${summary.failed} evaluation failure(s)`);
     } else {

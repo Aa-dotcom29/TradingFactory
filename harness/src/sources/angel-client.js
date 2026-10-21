@@ -8,6 +8,8 @@
 // client is the polling/ingestion path used by the harness workers.
 
 const os = require('node:os');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const config = require('../config');
 const log = require('../logger').child({ module: 'angel' });
 const { makeTotp } = require('../../../angel-feed.js');
@@ -132,14 +134,39 @@ class AngelClient {
     if (this.instruments) return this.instruments;
     // Two quote paths (the underlying universe and the held option contracts) can ask for the
     // master in the same cycle. Sharing the in-flight download keeps that to one request instead
-    // of two 20 MB downloads; a failure clears it so the next cycle retries.
+    // of two 35 MB downloads; a failure clears it so the next cycle retries.
     if (!this.instrumentsPromise) {
       this.instrumentsPromise = (async () => {
-        const response = await fetch(config.angel.scripMasterUrl, { signal: AbortSignal.timeout(25000) });
+        const cacheFile = path.join(config.root, 'harness', 'data', 'angel-instruments.json');
+        const maxAgeMs = Math.max(1, config.angel.scripMasterCacheHours) * 3600 * 1000;
+        try {
+          const stat = await fs.stat(cacheFile);
+          if (Date.now() - stat.mtimeMs <= maxAgeMs) {
+            const rows = JSON.parse(await fs.readFile(cacheFile, 'utf8'));
+            if (Array.isArray(rows) && rows.length) {
+              log.info('instrument master loaded from cache', { rows: rows.length, cacheFile });
+              this.instruments = rows;
+              return rows;
+            }
+          }
+        } catch (error) {
+          if (error.code !== 'ENOENT') log.warn('instrument master cache unreadable; downloading', { error: error.message });
+        }
+
+        const response = await fetch(config.angel.scripMasterUrl, {
+          signal: AbortSignal.timeout(config.angel.scripMasterTimeoutMs),
+        });
         if (!response.ok) throw new Error(`Could not download instrument master (HTTP ${response.status})`);
         const rows = await response.json();
-        log.info('instrument master loaded', { rows: rows.length });
+        if (!Array.isArray(rows) || !rows.length) throw new Error('Instrument master was empty');
+        log.info('instrument master downloaded', { rows: rows.length });
         this.instruments = rows;
+        try {
+          await fs.mkdir(path.dirname(cacheFile), { recursive: true });
+          await fs.writeFile(cacheFile, JSON.stringify(rows), 'utf8');
+        } catch (error) {
+          log.warn('could not cache instrument master', { error: error.message });
+        }
         return rows;
       })();
     }

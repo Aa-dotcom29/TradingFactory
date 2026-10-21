@@ -248,10 +248,8 @@ class IngestWorker {
     const sql = this.sql;
     return sql`
       select s.id, s.symbol, s.strike, s.option_type, s.snapshot
-      from signals s
-      left join outcomes o on o.signal_id = s.id
-      where o.id is null
-        and s.strike is not null
+      from active_signals s
+      where s.strike is not null
         and s.option_type in ('CE', 'PE')
       order by s.published_at asc
       limit 200

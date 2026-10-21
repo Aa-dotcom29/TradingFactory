@@ -13,6 +13,9 @@ harness/data/
 # oracle deployment inventory (contains the instance OCID and public IP)
 oracle-inventory.env
 
+# secrets bundle staged for Cloud Shell upload; never commit
+tf-secrets.env
+
 # agent tooling artifacts (installed skills, not project code)
 .agents/
 skills-lock.json

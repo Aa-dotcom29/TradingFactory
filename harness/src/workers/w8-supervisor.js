@@ -91,17 +91,30 @@ class Supervisor {
   }
 
   async housekeeping() {
-    if (!this.sql) return { purged: 0, purgedStale: 0 };
+    if (!this.sql) return { purged: 0, purgedStale: 0, tapeTicks: 0, tapeBooks: 0 };
     try {
       const [purged, purgedStale] = await Promise.all([
         queue.purgeDone(7),
         queue.purgeStalePending(2),
       ]);
+      // The tape is deliberately short-lived. Footprints are useful for the open
+      // trade, not a 90-day archive, and keeping every print forever would dwarf
+      // the signal ledger. The retention is configurable but never below one day.
+      const days = Math.max(1, config.tape.retentionDays);
+      const [ticks, books] = await Promise.all([
+        this.sql`delete from tape_ticks where captured_at < now() - ${days} * interval '1 day'`,
+        this.sql`delete from order_book_snapshots where captured_at < now() - ${days} * interval '1 day'`,
+      ]);
       if (purgedStale) log.warn('dropped stale queued notifications', { purgedStale });
-      return { purged, purgedStale };
+      return {
+        purged,
+        purgedStale,
+        tapeTicks: Number(ticks.count || 0),
+        tapeBooks: Number(books.count || 0),
+      };
     } catch (error) {
       log.warn('housekeeping failed', { error: error.message });
-      return { purged: 0, purgedStale: 0, error: error.message };
+      return { purged: 0, purgedStale: 0, tapeTicks: 0, tapeBooks: 0, error: error.message };
     }
   }
 }

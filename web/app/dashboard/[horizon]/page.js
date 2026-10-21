@@ -2,8 +2,9 @@ import { notFound } from 'next/navigation';
 import {
   getSignals, getFlow, getNews, getEntityFeatures, getFlowFeatures, getBias,
   getSignalStages, getSignalCandidates, getRiskDecisions, getHorizonPulse,
-  getOutcomes, getOutcomeStats, getOpenPositions,
+  getOutcomes, getOutcomeStats, getOpenPositions, getTradesForSignals,
 } from '@/lib/queries';
+import { getCurrentUser } from '@/lib/auth';
 import { horizonByKey } from '@/lib/horizons';
 import { publishModeFor } from '@/lib/publish';
 import StatusBanner from '@/components/StatusBanner';
@@ -31,6 +32,7 @@ export default async function HorizonPage({ params }) {
   const horizon = horizonByKey(raw);
   if (!horizon) notFound();
 
+  const user = await getCurrentUser();
   const [signals, flow, news, entityData, flowFeatures, bias, stages, candidates, riskDecisions, pulse, closed, outcomeStats, openPositions] = await Promise.all([
     getSignals(horizon.key),
     getFlow(horizon.key === 'POSITIONAL' ? 12 : 20),
@@ -47,6 +49,8 @@ export default async function HorizonPage({ params }) {
     getOpenPositions(horizon.key, 8),
   ]);
 
+  const email = String((user && user.email) || '').trim().toLowerCase();
+  const tradesBySignal = await getTradesForSignals(signals.map((signal) => signal.id), email);
   const live = publishModeFor(horizon.key) === 'live';
 
   return (
@@ -113,8 +117,16 @@ export default async function HorizonPage({ params }) {
 
       <section className="card">
         <h2>Published signals</h2>
-        <p className="hint">Risk-gated, versioned signals delivered to the household.</p>
-        <SignalList signals={signals} horizonLabel={horizon.label.toLowerCase()} />
+        <p className="hint">
+          Risk-gated, versioned signals. Shadow signals are paper-only and were not delivered.
+          Option plans are scored on their own premium series, not on the underlying spot; a plan
+          with no premium print is marked unpriced rather than stopped out on spot.
+        </p>
+        <SignalList
+          signals={signals}
+          horizonLabel={horizon.label.toLowerCase()}
+          tradesBySignal={tradesBySignal}
+        />
       </section>
 
       <section className="card">

@@ -34,9 +34,7 @@ export async function getHealth() {
         (select count(*)::int from outcomes) as outcomes_total,
         (select count(*)::int from outcomes
           where evaluated_at > now() - interval '24 hours') as outcomes_24h,
-        (select count(*)::int from signals s
-          left join outcomes o on o.signal_id = s.id
-          where o.id is null) as positions_open,
+        (select count(*)::int from active_signals) as positions_open,
         (select count(*)::int from config_registry where status = 'candidate') as proposals_pending
     `;
     return { configured: true, sources, counts: rows[0] || null, error: null };
@@ -105,12 +103,55 @@ export async function getSignals(horizon, limit = 25) {
   const sql = db();
   if (!sql) return [];
   try {
+    // One current card per contract and direction. A setup can be re-raised
+    // minutes apart (and the risk gate can supersede an older candidate); the
+    // published list is a current view, not an append-only audit trail, so the
+    // older rows stay in the ledger. An actionable row outranks a newer voided
+    // or retired one, so a cleanup cannot hide a plan that is still live.
+    //
+    // `actionable` is derived from the latest lifecycle event and the status of
+    // the risk config that wrote the signal. A retired config or a VOIDED event
+    // makes a card non-actionable; the UI disables its Trade entered button and
+    // the open-position counts come from the same active_signals view.
     return await sql`
-      select id, horizon, strategy, symbol, direction, instrument, strike, option_type,
-             entry, target, stop, rr, probability, confidence, published_at,
-             strategy_version, engine_version, snapshot->>'mode' as mode
-      from signals
-      where horizon = ${horizon}
+      select * from (
+        select distinct on (
+          s.symbol, s.direction, coalesce(s.instrument, ''),
+          coalesce(s.strike, 0), coalesce(s.option_type, '')
+        )
+          s.id, s.horizon, s.strategy, s.symbol, s.direction, s.instrument, s.strike,
+          s.option_type, s.entry, s.target, s.stop, s.rr, s.probability, s.confidence,
+          s.published_at, s.strategy_version, s.engine_version,
+          s.snapshot->>'mode' as mode,
+          s.snapshot->>'riskConfigVersion' as risk_config_version,
+          (s.snapshot->>'score')::numeric as score,
+          c.status as risk_config_status,
+          le.new_state as latest_state,
+          le.reason as latest_reason,
+          le.at as latest_state_at,
+          (
+            (le.new_state is null or le.new_state not in ('VOIDED', 'EXITED', 'EXPIRED'))
+            and coalesce(c.status, 'approved') = 'approved'
+          ) as actionable
+        from signals s
+        left join config_registry c
+          on c.family = 'risk' and c.version = s.snapshot->>'riskConfigVersion'
+        left join lateral (
+          select e.new_state, e.reason, e.at
+          from signal_events e
+          where e.signal_id = s.id
+          order by e.at desc
+          limit 1
+        ) le on true
+        where s.horizon = ${horizon}
+        order by s.symbol, s.direction, coalesce(s.instrument, ''),
+                 coalesce(s.strike, 0), coalesce(s.option_type, ''),
+                 case when (
+                   (le.new_state is null or le.new_state not in ('VOIDED', 'EXITED', 'EXPIRED'))
+                   and coalesce(c.status, 'approved') = 'approved'
+                 ) then 0 else 1 end,
+                 s.published_at desc
+      ) t
       order by published_at desc
       limit ${limit}
     `;
@@ -166,9 +207,8 @@ export async function getHorizonPulse(horizon) {
         (select count(*)::int from outcomes
           where horizon = ${horizon}
             and evaluated_at > now() - interval '24 hours') as closed24h,
-        (select count(*)::int from signals s
-          left join outcomes o on o.signal_id = s.id
-          where o.id is null and s.horizon = ${horizon}) as openPositions
+        (select count(*)::int from active_signals
+          where horizon = ${horizon}) as "openPositions"
     `;
     return rows[0] || empty;
   } catch {
@@ -387,29 +427,31 @@ export async function getSignalStageOverview(limit = 8) {
   }
 }
 
-// Slice 4: concrete tradeable proposals W4 raised for the risk gate. Nothing here is published
-// yet - a candidate only becomes a real signal once W5 passes it and W6 delivers it.
+// Slice 4: concrete tradeable proposals W4 raised for the risk gate. Only the
+// rows still waiting for that gate belong here. Approved, rejected and
+// superseded attempts are history: showing them next to a live candidate is
+// what made one setup look like two duplicate signals. The risk-gate panel is
+// the audit trail for those terminal decisions.
 export async function getSignalCandidates(horizon = null, limit = 10) {
   const sql = db();
   if (!sql) return [];
   try {
-    if (horizon) {
-      return await sql`
-        select id, as_of, horizon, symbol, direction, kind, instrument, strike, option_type,
-               expiry, entry, target, stop, rr, confidence, score, liquidity_ok, status, reasons,
-               provenance
-        from signal_candidates
-        where horizon = ${horizon}
-        order by created_at desc
-        limit ${limit}
-      `;
-    }
     return await sql`
-      select id, as_of, horizon, symbol, direction, kind, instrument, strike, option_type,
-             expiry, entry, target, stop, rr, confidence, score, liquidity_ok, status, reasons,
-             provenance
-      from signal_candidates
-      order by created_at desc
+      select * from (
+        select distinct on (
+          horizon, symbol, direction, coalesce(instrument, ''),
+          coalesce(strike, 0), coalesce(option_type, '')
+        )
+          id, as_of, horizon, symbol, direction, kind, instrument, strike, option_type,
+          expiry, entry, target, stop, rr, confidence, score, liquidity_ok, status, reasons,
+          provenance
+        from signal_candidates
+        where status = 'pending_risk'
+          and (${horizon}::text is null or horizon = ${horizon})
+        order by horizon, symbol, direction, coalesce(instrument, ''),
+                 coalesce(strike, 0), coalesce(option_type, ''), created_at desc
+      ) t
+      order by as_of desc
       limit ${limit}
     `;
   } catch {
@@ -484,9 +526,9 @@ export async function getOutcomes(horizon = null, limit = 12) {
   }
 }
 
-// Positions that have been published and not yet settled. The evaluator cannot close what it
-// cannot price, so an option-premium plan sits here waiting for option quote history rather than
-// being scored against the underlying. Saying so is the point.
+// Positions that are published, not yet settled, and still actionable. The evaluator cannot close
+// what it cannot price, so an option-premium plan waits for a premium series rather than being
+// scored against the underlying. A voided signal or one from a retired risk config is excluded.
 export async function getOpenPositions(horizon = null, limit = 10) {
   const sql = db();
   if (!sql) return [];
@@ -496,9 +538,8 @@ export async function getOpenPositions(horizon = null, limit = 10) {
         select s.id, s.horizon, s.symbol, s.direction, s.instrument, s.strike, s.option_type,
                s.entry, s.target, s.stop, s.confidence, s.published_at, s.snapshot,
                (s.strike is not null or s.option_type is not null) as option_plan
-        from signals s
-        left join outcomes o on o.signal_id = s.id
-        where o.id is null and s.horizon = ${horizon}
+        from active_signals s
+        where s.horizon = ${horizon}
         order by s.published_at desc
         limit ${limit}
       `;
@@ -507,9 +548,7 @@ export async function getOpenPositions(horizon = null, limit = 10) {
       select s.id, s.horizon, s.symbol, s.direction, s.instrument, s.strike, s.option_type,
              s.entry, s.target, s.stop, s.confidence, s.published_at, s.snapshot,
              (s.strike is not null or s.option_type is not null) as option_plan
-      from signals s
-      left join outcomes o on o.signal_id = s.id
-      where o.id is null
+      from active_signals s
       order by s.published_at desc
       limit ${limit}
     `;
@@ -627,5 +666,334 @@ export async function getProposals(limit = 5) {
     `;
   } catch {
     return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Slice 9 - trade workspace
+// ---------------------------------------------------------------------------
+
+// A signal card needs to know whether the signed-in person already entered the
+// trade, and which workspace to reopen. The list is small for a household, so
+// one query and an in-memory map is simpler than an array-typed SQL parameter.
+export async function getTradesForSignals(signalIds = [], userEmail = '') {
+  const map = {};
+  const wanted = new Set(signalIds || []);
+  if (!wanted.size || !userEmail) return map;
+  const sql = db();
+  if (!sql) return map;
+  try {
+    const rows = await sql`
+      select id, signal_id, status, outcome, entered_at, entry_price, outcome_at
+      from trade_entries
+      where user_email = ${userEmail}
+      order by entered_at desc
+      limit 200
+    `;
+    for (const row of rows) {
+      if (wanted.has(row.signal_id)) map[row.signal_id] = row;
+    }
+    return map;
+  } catch {
+    return map;
+  }
+}
+
+export async function getTradeEntry(tradeId, userEmail = '') {
+  const sql = db();
+  if (!sql || !tradeId || !userEmail) return null;
+  try {
+    const rows = await sql`
+      select t.id, t.signal_id, t.entered_at, t.entry_price, t.quantity, t.notes,
+             t.status, t.outcome, t.outcome_at, t.outcome_note, t.updated_at,
+             s.horizon, s.strategy, s.symbol, s.direction, s.instrument, s.strike,
+             s.option_type, s.entry as plan_entry, s.target, s.stop, s.rr,
+             s.confidence, s.probability, s.published_at, s.snapshot,
+             s.strategy_version, s.engine_version, s.setup_key
+      from trade_entries t
+      join signals s on s.id = t.signal_id
+      where t.id = ${tradeId}::uuid and t.user_email = ${userEmail}
+      limit 1
+    `;
+    return rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getUserTrades(userEmail = '', limit = 50) {
+  const sql = db();
+  if (!sql || !userEmail) return [];
+  try {
+    return await sql`
+      select t.id, t.signal_id, t.entered_at, t.entry_price, t.status, t.outcome,
+             t.outcome_at, t.outcome_note,
+             s.horizon, s.symbol, s.direction, s.instrument, s.strike, s.option_type,
+             s.entry as plan_entry, s.target, s.stop, s.published_at
+      from trade_entries t
+      join signals s on s.id = t.signal_id
+      where t.user_email = ${userEmail}
+      order by t.entered_at desc
+      limit ${limit}
+    `;
+  } catch {
+    return [];
+  }
+}
+
+export async function getLatestQuote(symbol) {
+  const sql = db();
+  if (!sql || !symbol) return null;
+  try {
+    const rows = await sql`
+      select as_of, values, provenance
+      from features
+      where feature_set = 'quote.v1' and symbol = ${symbol}
+      order by as_of desc
+      limit 1
+    `;
+    return rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+// Ascending, bounded history. The quote's own exchange time is preferred over
+// the poll time, exactly as W7 does when it scores a position.
+export async function getQuoteSeries(symbol, limit = 120) {
+  const sql = db();
+  if (!sql || !symbol) return [];
+  try {
+    return await sql`
+      select * from (
+        select as_of,
+               coalesce((values ->> 'quoteTime')::timestamptz, as_of) as at,
+               (values ->> 'ltp')::numeric as ltp
+        from features
+        where feature_set = 'quote.v1' and symbol = ${symbol}
+        order by as_of desc
+        limit ${limit}
+      ) t
+      order by at asc
+    `;
+  } catch {
+    return [];
+  }
+}
+
+export async function getOptionSeries(contractKey, limit = 120) {
+  const sql = db();
+  if (!sql || !contractKey) return [];
+  try {
+    return await sql`
+      select * from (
+        select as_of,
+               coalesce((values ->> 'quoteTime')::timestamptz, as_of) as at,
+               (values ->> 'ltp')::numeric as ltp,
+               provenance
+        from features
+        where feature_set = 'option.quote.v1' and symbol = ${contractKey}
+        order by as_of desc
+        limit ${limit}
+      ) t
+      order by at asc
+    `;
+  } catch {
+    return [];
+  }
+}
+
+export async function getFlowFeature(symbol) {
+  const sql = db();
+  if (!sql || !symbol) return null;
+  try {
+    const rows = await sql`
+      select as_of, values
+      from features
+      where feature_set = 'flow.v1' and symbol = ${symbol}
+      order by as_of desc
+      limit 1
+    `;
+    return rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getFlowContracts(symbol, limit = 6) {
+  const sql = db();
+  if (!sql || !symbol) return [];
+  try {
+    return await sql`
+      select captured_at, contract, option_type, strike, expiry, oi, oi_change,
+             volume, price, price_change_pct, spurt_score, read, bucket
+      from oi_spurts
+      where scope = 'CONTRACT'
+        and symbol = ${symbol}
+        and captured_at = (
+          select max(captured_at)
+          from oi_spurts
+          where scope = 'CONTRACT' and symbol = ${symbol}
+            and captured_at > now() - interval '3 days'
+        )
+      order by abs(coalesce(oi_change, 0)) desc, spurt_score desc nulls last
+      limit ${limit}
+    `;
+  } catch {
+    return [];
+  }
+}
+
+// The exact option the signal is holding. This is the fallback premium source
+// when the broker quote series is absent (for example, a local run with Angel
+// disabled): NSE's OI snapshot still carries the traded price of the contract.
+export async function getExactOptionContract({ symbol, strike, optionType, expiry } = {}) {
+  const sql = db();
+  if (!sql || !symbol || strike === null || strike === undefined || !optionType) return null;
+  const side = String(optionType).toUpperCase() === 'PE' ? 'Put' : 'Call';
+  try {
+    const rows = await sql`
+      select captured_at, contract, option_type, strike, expiry, oi, oi_change,
+             volume, price, price_change_pct, spurt_score, read, bucket
+      from oi_spurts
+      where scope = 'CONTRACT'
+        and symbol = ${symbol}
+        and strike = ${strike}
+        and expiry = ${expiry || null}
+        and (option_type = ${optionType} or option_type = ${side})
+        and captured_at > now() - interval '3 days'
+      order by captured_at desc
+      limit 1
+    `;
+    return rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getBiasVerdict(horizon, symbol) {
+  const sql = db();
+  if (!sql || !horizon || !symbol) return null;
+  try {
+    const rows = await sql`
+      select direction, score, confidence, coverage, as_of, components, evidence, provenance
+      from bias_verdicts
+      where horizon = ${horizon} and symbol = ${symbol}
+      order by as_of desc
+      limit 1
+    `;
+    return rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getSignalEvents(signalId, limit = 6) {
+  const sql = db();
+  if (!sql || !signalId) return [];
+  try {
+    return await sql`
+      select at, previous_state, new_state, reason
+      from signal_events
+      where signal_id = ${signalId}::uuid
+      order by at desc
+      limit ${limit}
+    `;
+  } catch {
+    return [];
+  }
+}
+
+export async function getEvaluatorOutcome(signalId) {
+  const sql = db();
+  if (!sql || !signalId) return null;
+  try {
+    const rows = await sql`
+      select evaluated_at, result, entry, exit, pnl_pct, mfe, mae, bars_held, payload
+      from outcomes
+      where signal_id = ${signalId}::uuid
+      order by evaluated_at desc
+      limit 1
+    `;
+    return rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Slice 10 - live tape and order book
+// ---------------------------------------------------------------------------
+
+// One read for the focus workspace: the newest prints, the current book and a short
+// book-history series. `contract` is null for the underlying and the option identity
+// for a contract tape. `is not distinct from` makes null mean "the underlying rows"
+// without a second query shape.
+export async function getTapeAnalytics(symbol, options = {}) {
+  const sql = db();
+  const minutes = Math.max(1, Math.min(240, Number(options.minutes) || 30));
+  const maxTicks = Math.max(100, Math.min(20000, Number(options.maxTicks) || 6000));
+  const contract = options.contract || null;
+  const empty = {
+    symbol, contract, minutes, ticks: [], depth: null, depthHistory: [], latestTick: null,
+  };
+  if (!sql || !symbol) return empty;
+  try {
+    const [ticks, depth, history, latest] = await Promise.all([
+      sql`
+        select * from (
+          select captured_at, exchange_at, ltp, last_qty, volume_delta, cum_volume,
+                 total_buy_qty, total_sell_qty, open_interest, best_bid, best_ask,
+                 side, side_confidence, source, quality
+          from tape_ticks
+          where symbol = ${symbol}
+            and contract is not distinct from ${contract}
+            and captured_at > now() - (${minutes}::int * interval '1 minute')
+          order by captured_at desc
+          limit ${maxTicks}
+        ) t
+        order by captured_at asc
+      `,
+      sql`
+        select captured_at, exchange_at, token, levels, bids, asks, best_bid, best_ask,
+               bid_qty, ask_qty, imbalance, source
+        from order_book_snapshots
+        where symbol = ${symbol}
+          and contract is not distinct from ${contract}
+        order by captured_at desc
+        limit 1
+      `,
+      sql`
+        select * from (
+          select captured_at, imbalance, bid_qty, ask_qty, best_bid, best_ask
+          from order_book_snapshots
+          where symbol = ${symbol}
+            and contract is not distinct from ${contract}
+            and captured_at > now() - interval '15 minutes'
+          order by captured_at desc
+          limit 240
+        ) t
+        order by captured_at asc
+      `,
+      sql`
+        select captured_at, ltp, volume_delta, last_qty, side, side_confidence
+        from tape_ticks
+        where symbol = ${symbol}
+          and contract is not distinct from ${contract}
+        order by captured_at desc
+        limit 1
+      `,
+    ]);
+    return {
+      symbol,
+      contract,
+      minutes,
+      ticks,
+      depth: depth[0] || null,
+      depthHistory: history,
+      latestTick: latest[0] || null,
+    };
+  } catch {
+    return empty;
   }
 }

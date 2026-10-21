@@ -139,6 +139,71 @@ create table if not exists features (
 create index if not exists features_set_asof_idx on features (feature_set, as_of desc);
 
 -- ---------------------------------------------------------------------------
+-- Slice 10 - live tape, order book and footprints
+--
+-- Broker WebSocket ticks are the only free source of trade-level data available to this
+-- household. Each row is one observed trade print, with the best bid/ask that prevailed
+-- when it arrived. `side` is inferred from the print price against that book, so the
+-- dashboard can build a footprint without pretending it received exchange aggressor flags.
+--
+-- `symbol` is the harness universe name (for example 'NIFTY 50'); `contract` is the
+-- option identity ('NIFTY|2026-10-27|23100|CE') when the token is an option. The raw
+-- token is kept because the broker's instrument master changes daily.
+-- ---------------------------------------------------------------------------
+create table if not exists tape_ticks (
+  id             bigint generated always as identity,
+  captured_at    timestamptz not null,
+  exchange_at    timestamptz,
+  symbol         text not null,
+  contract       text,
+  token          text not null,
+  exchange       text not null default 'NSE',
+  ltp            numeric,
+  last_qty       bigint,
+  volume_delta   bigint,
+  cum_volume     bigint,
+  total_buy_qty  bigint,
+  total_sell_qty bigint,
+  open_interest  bigint,
+  best_bid       numeric,
+  best_ask       numeric,
+  side           text not null default 'UNKNOWN' check (side in ('BUY','SELL','UNKNOWN')),
+  side_confidence text not null default 'NONE'
+                   check (side_confidence in ('HIGH','MEDIUM','LOW','NONE')),
+  source         text not null default 'angel-ws',
+  quality        text not null default 'SNAPSHOT',
+  primary key (id, captured_at)
+) partition by range (captured_at);
+create index if not exists tape_ticks_symbol_idx on tape_ticks (symbol, captured_at desc);
+create index if not exists tape_ticks_contract_idx on tape_ticks (contract, captured_at desc);
+create index if not exists tape_ticks_token_idx on tape_ticks (token, captured_at desc);
+
+-- One depth snapshot per token per throttle window. Five levels is what the broker's
+-- Snap Quote mode carries for F&O; NSE cash can additionally stream 20 levels in Depth
+-- mode. The dashboard labels the level count it actually received.
+create table if not exists order_book_snapshots (
+  id          bigint generated always as identity,
+  captured_at timestamptz not null,
+  exchange_at timestamptz,
+  symbol      text not null,
+  contract    text,
+  token       text not null,
+  exchange    text not null default 'NSE',
+  levels      integer not null default 5,
+  bids        jsonb not null default '[]'::jsonb,
+  asks        jsonb not null default '[]'::jsonb,
+  best_bid    numeric,
+  best_ask    numeric,
+  bid_qty     bigint,
+  ask_qty     bigint,
+  imbalance   numeric,
+  source      text not null default 'angel-ws',
+  primary key (id, captured_at)
+) partition by range (captured_at);
+create index if not exists order_book_symbol_idx on order_book_snapshots (symbol, captured_at desc);
+create index if not exists order_book_contract_idx on order_book_snapshots (contract, captured_at desc);
+
+-- ---------------------------------------------------------------------------
 -- Bias verdicts (Slice 3) - the input to signals, kept as its own auditable series
 -- so the bias meter can be backtested separately from the signals it feeds.
 -- ---------------------------------------------------------------------------
@@ -309,6 +374,29 @@ create index if not exists config_registry_family_idx
   on config_registry (family, status, approved_at desc nulls last, created_at desc);
 
 -- ---------------------------------------------------------------------------
+-- The actionable open ledger.
+--
+-- A signal is not open merely because no outcome row exists. It is open only while it is still
+-- actionable: no outcome, no terminal event, and a risk config that is still approved. This view
+-- is what the evaluator scans and what the dashboard counts as an open position. It deliberately
+-- keeps shadow signals (they are paper positions from an approved config) and excludes retired
+-- configs and administrative voids, so a cleanup cannot be scored later by a replay.
+-- ---------------------------------------------------------------------------
+create or replace view active_signals as
+select s.*
+from signals s
+left join outcomes o on o.signal_id = s.id
+left join config_registry c
+  on c.family = 'risk' and c.version = s.snapshot->>'riskConfigVersion'
+where o.id is null
+  and coalesce(c.status, 'approved') = 'approved'
+  and not exists (
+    select 1 from signal_events e
+    where e.signal_id = s.id
+      and e.new_state in ('VOIDED', 'EXITED', 'EXPIRED')
+  );
+
+-- ---------------------------------------------------------------------------
 -- Plain-SQL queue (replaces a broker; portable; FOR UPDATE SKIP LOCKED)
 -- ---------------------------------------------------------------------------
 create table if not exists queue_messages (
@@ -375,7 +463,7 @@ declare
   start_month date;
   part_name   text;
 begin
-  foreach parent in array array['market_snapshots','oi_spurts','news_items','features','bias_verdicts','signal_stages'] loop
+  foreach parent in array array['market_snapshots','oi_spurts','news_items','features','bias_verdicts','signal_stages','tape_ticks','order_book_snapshots'] loop
     for i in 0..months_ahead loop
       start_month := (date_trunc('month', now()) + (i || ' month')::interval)::date;
       part_name := format('%s_%s', parent, to_char(start_month, 'YYYYMM'));
@@ -472,6 +560,41 @@ alter table market_snapshots add constraint market_snapshots_kind_check
 -- read cheap for both the underlying and the option series once the partitions have months of data.
 create index if not exists features_symbol_asof_idx on features (feature_set, symbol, as_of desc);
 
+-- ---------------------------------------------------------------------------
+-- Slice 9 - user trade journal
+--
+-- A published signal is a plan; a trade entry is the moment a person says they
+-- actually took it. The row belongs to a profile and keeps the user's own
+-- outcome mark separate from the evaluator's `outcomes` row, so a human can
+-- disagree with the machine without rewriting its record.
+--
+-- `user_email` is the lookup key because the dashboard can run with auth
+-- disabled in local development, where there is no guaranteed profile row.
+-- `profile_id` is kept when it exists so a household can later report by
+-- profile without a migration.
+-- ---------------------------------------------------------------------------
+create table if not exists trade_entries (
+  id            uuid primary key default gen_random_uuid(),
+  signal_id     uuid not null references signals(id) on delete cascade,
+  profile_id    uuid references profiles(id) on delete set null,
+  user_email    text not null,
+  entered_at    timestamptz not null default now(),
+  entry_price   numeric,
+  quantity      numeric,
+  notes         text,
+  status        text not null default 'OPEN' check (status in ('OPEN','CLOSED')),
+  outcome       text check (outcome in ('SUCCESS','FAIL','OUTPERFORM','NEUTRAL')),
+  outcome_at    timestamptz,
+  outcome_note  text,
+  updated_at    timestamptz not null default now(),
+  unique (signal_id, user_email)
+);
+create index if not exists trade_entries_user_idx
+  on trade_entries (user_email, entered_at desc);
+create index if not exists trade_entries_signal_idx on trade_entries (signal_id);
+create index if not exists trade_entries_status_idx
+  on trade_entries (user_email, status, entered_at desc);
+
 insert into schema_migrations (version) values ('0001_harness_backbone')
   on conflict (version) do nothing;
 insert into schema_migrations (version) values ('0002_slice1_auth')
@@ -487,6 +610,12 @@ insert into schema_migrations (version) values ('0006_slice5_quote_fallback')
 insert into schema_migrations (version) values ('0007_slice7_evaluate')
   on conflict (version) do nothing;
 insert into schema_migrations (version) values ('0008_slice8_option_quotes')
+  on conflict (version) do nothing;
+insert into schema_migrations (version) values ('0009_trade_journal')
+  on conflict (version) do nothing;
+insert into schema_migrations (version) values ('0010_live_tape')
+  on conflict (version) do nothing;
+insert into schema_migrations (version) values ('0011_actionable_signals')
   on conflict (version) do nothing;
 
 commit;

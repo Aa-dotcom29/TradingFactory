@@ -63,7 +63,7 @@ const config = {
   env: process.env.NODE_ENV || 'development',
   dryRun: bool(process.env.HARNESS_DRY_RUN, false),
   once: bool(process.env.HARNESS_ONCE, false),
-  role: process.env.HARNESS_ROLE || 'all', // all | w0 | w1 | w2 | w3 | w4 | w5 | w6 | w7 | w8
+  role: process.env.HARNESS_ROLE || 'all', // all | w0 | w1 | w2 | w3 | w4 | w5 | w6 | w7 | w8 | w9
   workerName: process.env.HARNESS_WORKER_NAME || `harness-${process.pid}`,
 
   database: {
@@ -75,6 +75,11 @@ const config = {
   angel: {
     apiRoot: ANGEL_API_ROOT,
     scripMasterUrl: 'https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json',
+    // The master is about 35 MB. A 15-25 second fetch is not enough on a slow link, so
+    // the download gets its own longer ceiling and a local cache. The cache is public
+    // instrument data, never credentials.
+    scripMasterTimeoutMs: int(process.env.ANGEL_SCRIP_MASTER_TIMEOUT_MS, 120000),
+    scripMasterCacheHours: int(process.env.ANGEL_SCRIP_MASTER_CACHE_HOURS, 12),
     clientId: process.env.ANGEL_CLIENT_ID || '',
     apiKey: process.env.ANGEL_API_KEY || '',
     password: process.env.ANGEL_PASSWORD || '',
@@ -116,6 +121,27 @@ const config = {
     spacingMs: int(process.env.HARNESS_YAHOO_SPACING_MS, 400),
     userAgent: process.env.HARNESS_YAHOO_USER_AGENT
       || 'Mozilla/5.0 (compatible; TradingFactory/0.1; market-intelligence harness)',
+  },
+
+  // Worker 7. An option plan whose premium series never arrives cannot be judged against spot.
+  // Instead of parking it for the whole holding window (30 days for SWING), settle it as
+  // NO_PRICE_SOURCE after this grace. The default of 8 hours means a plan published during the
+  // session is settled after that session's close, while still leaving room for a delayed feed.
+  evaluate: {
+    unpricedGraceHours: num(process.env.HARNESS_UNPRICED_GRACE_HOURS, 8),
+  },
+
+  // Slice 10. The broker WebSocket is the only free trade-level feed: Snap Quote
+  // carries five book levels for NSE cash and F&O, while Depth mode adds twenty
+  // levels for NSE cash. The worker keeps a bounded set of tokens (open plans plus
+  // the configured universe) so the broker's subscription quota is never exhausted.
+  tape: {
+    enabled: bool(process.env.HARNESS_TAPE_ENABLED, true),
+    depthTokens: int(process.env.HARNESS_TAPE_DEPTH_TOKENS, 50),
+    snapshotMs: int(process.env.HARNESS_TAPE_SNAPSHOT_MS, 1000),
+    refreshMs: int(process.env.HARNESS_TAPE_REFRESH_MS, 60000),
+    reconnectMs: int(process.env.HARNESS_TAPE_RECONNECT_MS, 5000),
+    retentionDays: int(process.env.HARNESS_TAPE_RETENTION_DAYS, 7),
   },
 
   poll: {

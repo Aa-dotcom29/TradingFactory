@@ -128,15 +128,15 @@ class RiskWorker {
     `;
   }
 
-  // Everything the gate needs that is not on the candidate itself. Until W7 exists there are no
-  // closed trades, so the loss controls receive an empty history and report SKIPPED - they are
-  // wired and tested, they are simply not yet fed.
+  // Everything the gate needs that is not on the candidate itself. Exposure reads the actionable
+  // open ledger, not every signal ever published: a voided or retired plan must not consume a
+  // slot or suppress a new call. The loss controls read the evaluator's closed outcomes.
   async loadContext(now, riskConfig) {
     const sql = this.sql;
     const [signals, recentOutcomes, todayRows, lastLoss] = await Promise.all([
       sql`
         select horizon, symbol, direction, published_at
-        from signals
+        from active_signals
         where published_at > now() - interval '180 days'
       `,
       sql`

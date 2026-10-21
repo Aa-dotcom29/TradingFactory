@@ -24,6 +24,9 @@ const log = require('../logger').child({ module: 'yahoo' });
 
 const PROVENANCE = 'yahoo-delayed';
 const PROVIDER = 'Yahoo Finance (NSE, delayed)';
+const MAX_429_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 500;
+const MAX_RETRY_AFTER_MS = 30000;
 
 // Yahoo uses index tickers, not the NSE trading symbols, so the two index names the harness
 // tracks have to be mapped explicitly. Equities are simply suffixed with `.NS`.
@@ -114,20 +117,43 @@ async function fetchQuote(symbol, options = {}) {
   const url = `${config.yahoo.apiRoot}/v8/finance/chart/${encodeURIComponent(ysym)}`
     + `?range=${encodeURIComponent(config.yahoo.range)}&interval=${encodeURIComponent(config.yahoo.interval)}`;
 
-  const controller = typeof AbortController === 'function' ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-
   try {
-    const response = await doFetch(url, {
-      headers: { accept: 'application/json', 'user-agent': config.yahoo.userAgent },
-      signal: controller ? controller.signal : undefined,
-    });
-    if (!response || !response.ok) {
-      throw new Error(`HTTP ${response ? response.status : 'no response'}`);
+    for (let attempt = 0; ; attempt += 1) {
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+      let response;
+      try {
+        response = await doFetch(url, {
+          headers: { accept: 'application/json', 'user-agent': config.yahoo.userAgent },
+          signal: controller ? controller.signal : undefined,
+        });
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+
+      if (response && response.status === 429 && attempt < MAX_429_RETRIES) {
+        const retryAfter = response.headers && typeof response.headers.get === 'function'
+          ? response.headers.get('retry-after')
+          : null;
+        const seconds = Number(retryAfter);
+        const retryAt = retryAfter && Number.isFinite(Date.parse(retryAfter))
+          ? Date.parse(retryAfter) - Date.now()
+          : null;
+        const delayMs = retryAfter && retryAfter.trim() !== ''
+          ? Math.max(0, Math.min(MAX_RETRY_AFTER_MS,
+            Number.isFinite(seconds) ? seconds * 1000 : (retryAt === null ? RETRY_BASE_DELAY_MS * (2 ** attempt) : retryAt)))
+          : RETRY_BASE_DELAY_MS * (2 ** attempt);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+
+      if (!response || !response.ok) {
+        throw new Error(`HTTP ${response ? response.status : 'no response'}`);
+      }
+      const parsed = parseChart(await response.json(), symbol);
+      if (!parsed) throw new Error('chart response carried no usable quote');
+      return parsed;
     }
-    const parsed = parseChart(await response.json(), symbol);
-    if (!parsed) throw new Error('chart response carried no usable quote');
-    return parsed;
   } catch (error) {
     return {
       symbol,
@@ -135,8 +161,6 @@ async function fetchQuote(symbol, options = {}) {
       error: error.name === 'AbortError' ? `timed out after ${timeoutMs}ms` : error.message,
       provenance: PROVENANCE,
     };
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 

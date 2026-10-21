@@ -96,12 +96,34 @@ test('fetchQuote returns a parsed quote and always carries provenance', async ()
 });
 
 test('fetchQuote reports an HTTP failure instead of throwing', async () => {
+  let calls = 0;
   const quote = await fetchQuote('NIFTY', {
-    fetchImpl: async () => ({ ok: false, status: 429, json: async () => ({}) }),
+    fetchImpl: async () => {
+      calls += 1;
+      return { ok: false, status: 429, headers: { get: () => '0' }, json: async () => ({}) };
+    },
     timeoutMs: 1000,
   });
   assert.equal(quote.error, 'HTTP 429');
   assert.equal(quote.provenance, PROVENANCE);
+  assert.equal(calls, 3);
+});
+
+test('fetchQuote retries a 429 and returns the recovered quote', async () => {
+  let calls = 0;
+  const quote = await fetchQuote('NIFTY', {
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return { ok: false, status: 429, headers: { get: () => '0' } };
+      }
+      return { ok: true, status: 200, json: async () => chart() };
+    },
+    timeoutMs: 1000,
+  });
+  assert.equal(quote.ltp, 23146.15);
+  assert.equal(quote.provenance, PROVENANCE);
+  assert.equal(calls, 2);
 });
 
 test('fetchQuote reports a timeout as a timeout rather than a generic error', async () => {

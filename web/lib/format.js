@@ -160,6 +160,24 @@ export function publishModeTone(mode) {
   return String(mode || '').toLowerCase() === 'shadow' ? 'warn' : 'accent';
 }
 
+// The latest lifecycle event on a signal. SHADOWED is a warning because the alert was not
+// delivered; VOIDED and the terminal states are muted because the plan must not be acted on.
+export function signalStateTone(state) {
+  const value = String(state || '').toUpperCase();
+  if (value === 'PUBLISHED') return 'accent';
+  if (value === 'SHADOWED') return 'warn';
+  return 'muted';
+}
+
+// The risk config that wrote a signal. A retired config means the plan is archival, not live.
+export function riskConfigTone(status) {
+  const value = String(status || '').toLowerCase();
+  if (value === 'retired') return 'down';
+  if (value === 'candidate') return 'warn';
+  if (value === 'approved') return 'accent';
+  return 'muted';
+}
+
 // Slice 5.5: where a market number came from. A delayed read must never be dressed up as a live
 // one, so the fallback source is coloured as a caution rather than as a normal value.
 export function provenanceTone(provenance) {
@@ -204,4 +222,18 @@ export function resultLabel(result) {
   if (v === 'TIME') return 'window ended';
   if (v === 'NO_PRICE_SOURCE') return 'no price source';
   return v ? v.toLowerCase() : 'open';
+}
+
+// Slice 9: a human's own mark on a trade. OUTPERFORM is a win that exceeded
+// the plan; NEUTRAL is a flat or inconclusive close. The evaluator's automatic
+// result is rendered separately, so a person can disagree without rewriting it.
+export function tradeOutcomeTone(outcome) {
+  const v = String(outcome || '').toUpperCase();
+  if (v === 'SUCCESS' || v === 'OUTPERFORM') return 'up';
+  if (v === 'FAIL') return 'down';
+  return 'muted';
+}
+
+export function tradeStatusTone(status) {
+  return String(status || '').toUpperCase() === 'OPEN' ? 'accent' : 'muted';
 }

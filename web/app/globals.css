@@ -788,6 +788,19 @@ input:focus, select:focus { outline: none; border-color: var(--sig); box-shadow:
 .nowrap { white-space: nowrap; }
 .tick { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-faint); }
 
+/* Trade workspace: the only new primitives are a CTA stack, the outcome button
+   row, a price sparkline and the time-value meter. Everything else reuses the
+   existing card and stat language. */
+.trade-cta { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.trade-cta-error { font-size: 11px; max-width: 240px; text-align: right; }
+.outcome-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.sparkline { width: 100%; height: 64px; display: block; margin-top: 4px; }
+.sparkline polyline { stroke: var(--sig); }
+.sparkline.up polyline { stroke: var(--up); }
+.sparkline.down polyline { stroke: var(--down); }
+.meter { height: 10px; border: 1px solid var(--rule-hi); background: #070c11; border-radius: 2px; overflow: hidden; }
+.meter > span { display: block; height: 100%; background: var(--warn); }
+
 /* Focus ring: visible, and never removed. */
 :focus-visible { outline: 2px solid var(--sig); outline-offset: 2px; }
 
@@ -819,4 +832,130 @@ input:focus, select:focus { outline: none; border-color: var(--sig); box-shadow:
   .brand .mark::after { animation: none; }
   .banner-hud::after { animation: none; }
   * { transition: none !important; }
+}
+
+/* =============================================================================
+   Slice 10 - tape, footprint and order book
+   ============================================================================= */
+
+.footprint-table {
+  border-collapse: separate;
+  border-spacing: 1px;
+  width: max-content;
+  min-width: 100%;
+  font-size: 11.5px;
+}
+
+.footprint-table th,
+.footprint-table td {
+  padding: 4px 6px;
+  border: 1px solid var(--rule);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.footprint-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--hull);
+  color: var(--ink-faint);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.footprint-table tbody th {
+  background: var(--hull-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+.footprint-table .fp-cell {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.footprint-table .fp-cell.buy-heavy { background: rgba(46, 208, 127, 0.1); }
+.footprint-table .fp-cell.sell-heavy { background: rgba(255, 93, 82, 0.1); }
+.footprint-table .fp-buy { color: var(--up); }
+.footprint-table .fp-sell { color: var(--down); }
+.footprint-table .fp-sep { color: var(--ink-faint); padding: 0 2px; }
+.footprint-table .fp-unknown { color: var(--warn); margin-left: 3px; font-size: 10px; }
+.footprint-table .fp-empty { color: var(--ink-faint); }
+.footprint-table .fp-delta-row th,
+.footprint-table .fp-delta-row td {
+  border-top: 2px solid var(--rule-hi);
+  background: var(--hull-2);
+  font-family: var(--font-mono);
+}
+
+.book-imbalance {
+  display: flex;
+  height: 10px;
+  border: 1px solid var(--rule-hi);
+  background: #070c11;
+  overflow: hidden;
+}
+
+.book-imbalance .bid { background: linear-gradient(90deg, rgba(46, 208, 127, 0.45), var(--up)); }
+.book-imbalance .ask { background: linear-gradient(90deg, var(--down), rgba(255, 93, 82, 0.45)); }
+
+.book-ladder {
+  border: 1px solid var(--rule);
+  background: #070c11;
+  font-size: 12px;
+}
+
+.book-head,
+.book-row {
+  display: grid;
+  grid-template-columns: 86px minmax(90px, 1fr) 54px;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 8px;
+}
+
+.book-head {
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 10px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.book-row { border-bottom: 1px solid rgba(255, 255, 255, 0.03); }
+.book-row.ask .book-price { color: var(--down); }
+.book-row.bid .book-price { color: var(--up); }
+
+.book-size {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+}
+
+.book-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  opacity: 0.18;
+}
+
+.book-row.ask .book-bar { background: var(--down); }
+.book-row.bid .book-bar { background: var(--up); }
+.book-qty { position: relative; z-index: 1; padding-left: 6px; }
+.book-orders { text-align: right; color: var(--ink-faint); }
+
+.book-spread {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 8px;
+  border-top: 1px solid var(--rule-hi);
+  border-bottom: 1px solid var(--rule-hi);
+  background: var(--hull-2);
 }

@@ -104,11 +104,12 @@ function normalisePath(path) {
 // history we hold is underlying quotes - so the two are on the same instrument and comparable.
 //
 // An option plan quotes those levels on the option *premium*. Since Slice 8 the harness persists an
-// option's own premium series (W0, `option.quote.v1`), so such a plan is scored against that series
-// and not against spot. Until a reading exists it is reported as awaiting a price source, and once
-// its window elapses it settles with no verdict rather than staying open forever. Judging a premium
-// against an underlying price would produce a confident, meaningless number and then feed it to the
-// loss controls, so a mismatched pair is refused outright.
+// option's own premium series (W0, `option.quote.v1`; W9, `tape_ticks`; or the NSE snapshot in
+// `oi_spurts`), so such a plan is scored against that series and not against spot. Until a reading
+// exists it is reported as awaiting a price source, and after a short grace window it settles with
+// no verdict rather than staying open for the whole holding period. Judging a premium against an
+// underlying price would produce a confident, meaningless number and then feed it to the loss
+// controls, so a mismatched pair is refused outright.
 function planKind(signal, plan) {
   const instrument = String((signal && signal.instrument) || '').toLowerCase();
   const explicit = String((plan && plan.kind) || '').toUpperCase();
@@ -154,6 +155,10 @@ function evaluateOutcome(options = {}) {
 
   const base = {
     horizon, symbol: signal.symbol || null, direction, side, entry, kind, priceSource,
+    // Which stored series produced the readings ('option.quote.v1', 'tape_ticks',
+    // 'oi_spurts'). The evaluator's priceSource says what kind of instrument the
+    // series represents; this says where the numbers actually came from.
+    priceSeries: options.priceSeries || null,
   };
 
   if (!isBullish(direction) && direction !== 'BEARISH') {
@@ -200,15 +205,19 @@ function evaluateOutcome(options = {}) {
   const readings = wrongSeries ? [] : normalisePath(options.path).filter((reading) => reading.at >= publishedAt);
 
   // Nothing to walk: either the plan cannot be priced on the series we hold, or no reading ever
-  // arrived. While the holding window is still open that is a position we are waiting on - OPEN for
-  // an underpriced plan, AWAITING_PRICE_SOURCE for one we cannot price at all. Once the window has
-  // elapsed the position is settled with no verdict and no pnl, so a plan that could never be
-  // priced stops accumulating as a permanent open position. It never invents an exit or a return.
+  // arrived. An underlying plan waits for its holding window; an option-premium plan gets a much
+  // shorter grace window, because a premium series that never arrived leaves the stop and target
+  // unknowable. Settling it as NO_PRICE_SOURCE is honest and stops it looking like a live position
+  // for 30 days. Neither path invents an exit or a return.
   if (!readings.length) {
     const reason = optionPlan
       ? 'option-premium plan: needs option quote history, not the underlying price'
       : 'no price readings since publication';
-    if (now >= publishedAt + windowMs) {
+    const graceHours = optionPlan
+      ? Math.max(0, (num(options.unpricedGraceHours) ?? 8))
+      : null;
+    const settleAt = optionPlan ? publishedAt + graceHours * 3600000 : publishedAt + windowMs;
+    if (now >= settleAt) {
       return {
         status: STATUS.CLOSED,
         ...base,
@@ -223,9 +232,12 @@ function evaluateOutcome(options = {}) {
         heldMinutes: Math.round((now - publishedAt) / 60000),
         heldDays: round((now - publishedAt) / 86400000, 3),
         windowDays,
+        graceHours,
         target,
         stop,
-        reason: `${reason}; the ${windowDays}d holding window elapsed with no price source`,
+        reason: optionPlan
+          ? `${reason}; no price source within the ${graceHours}h grace window`
+          : `${reason}; the ${windowDays}d holding window elapsed with no price source`,
       };
     }
     return {
@@ -235,6 +247,7 @@ function evaluateOutcome(options = {}) {
       readings: 0,
       target,
       stop,
+      ...(optionPlan ? { graceHours } : {}),
     };
   }
 

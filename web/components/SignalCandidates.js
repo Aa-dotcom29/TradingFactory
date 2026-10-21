@@ -3,9 +3,10 @@ import {
 } from '@/lib/format';
 import Provenance from '@/components/Provenance';
 
-// Slice 4 output: the concrete tradeable proposals the signal builder raised. They are NOT
-// published signals - every one is waiting for the non-bypassable risk gate (W5, the next
-// slice), which is why the status is shown on every card rather than assumed to be "live".
+// Slice 4 output: concrete tradeable proposals that are still waiting for the
+// non-bypassable risk gate. Approved, rejected and superseded attempts are not
+// shown here; they live in the risk-gate audit trail below. Keeping only the
+// queued row is what stops one setup from appearing twice.
 
 function contractLine(candidate) {
   if (candidate.kind === 'OPTION') {
@@ -18,9 +19,9 @@ export default function SignalCandidates({ candidates = [], showHorizon = false 
   if (!candidates.length) {
     return (
       <div className="empty">
-        <strong>No trade candidates right now</strong>
-        A candidate is only raised when a name reaches the READY stage with a complete, liquid
-        plan. Until then the lifecycle panel above shows what is forming.
+        <strong>No trade candidates waiting for the gate</strong>
+        A candidate appears here only between READY and the risk decision. Approved signals move
+        to the published list, and rejected or superseded attempts stay in the risk-gate history.
       </div>
     );
   }

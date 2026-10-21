@@ -263,13 +263,38 @@ test('an option-premium plan is settled once its window elapses, not left open f
   assert.equal(result.readings, 0);
 });
 
+test('an option-premium plan with no readings waits inside its short grace window', () => {
+  const result = evaluate(
+    { instrument: 'OPTION', strike: 22000, option_type: 'CE' },
+    [],
+    { now: T0 + 3600000, unpricedGraceHours: 8 },
+  );
+  assert.equal(result.status, STATUS.AWAITING_PRICE_SOURCE);
+  assert.equal(result.graceHours, 8);
+  assert.match(result.reason, /option quote history/);
+});
+
+test('an option-premium plan with no readings settles after the grace window', () => {
+  const result = evaluate(
+    { instrument: 'OPTION', strike: 22000, option_type: 'CE' },
+    [],
+    { now: T0 + 9 * 3600000, unpricedGraceHours: 8 },
+  );
+  assert.equal(result.status, STATUS.CLOSED);
+  assert.equal(result.result, RESULT.NO_PRICE_SOURCE);
+  assert.equal(result.unpriced, true);
+  assert.equal(result.pnlPct, null);
+  assert.equal(result.graceHours, 8);
+  assert.match(result.reason, /8h grace window/);
+});
+
 // Slice 8: option premiums are persisted, so an option plan is scored - against the premium series
 // it actually trades on, which is the whole point of keeping the two series apart.
 test('an option-premium plan is scored against its own premium series', () => {
   const result = evaluate(
     { instrument: 'OPTION', strike: 22000, option_type: 'CE' },
     [{ at: at(5), price: 104 }, { at: at(20), price: 118 }, { at: at(30), price: 121 }],
-    { priceSource: PRICE_SOURCE.OPTION },
+    { priceSource: PRICE_SOURCE.OPTION, priceSeries: 'tape_ticks' },
   );
   assert.equal(result.status, STATUS.CLOSED);
   assert.equal(result.result, RESULT.TARGET);
@@ -278,6 +303,7 @@ test('an option-premium plan is scored against its own premium series', () => {
   assert.equal(result.pnlPct, 10);
   assert.equal(result.kind, 'OPTION');
   assert.equal(result.priceSource, PRICE_SOURCE.OPTION);
+  assert.equal(result.priceSeries, 'tape_ticks');
   assert.equal(result.readings, 2); // the two readings up to the exit
 });
 

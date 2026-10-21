@@ -15,6 +15,7 @@
 //   w6            - publisher (Telegram, shadow-first)
 //   w7            - evaluator (closes positions, scores outcomes, proposes configs)
 //   w8            - supervisor
+//   w9            - live tape + order book (broker WebSocket)
 // Splitting roles lets a busy worker scale out later without changing the code.
 
 const config = require('./config');
@@ -29,8 +30,9 @@ const { RiskWorker } = require('./workers/w5-risk');
 const { PublishWorker } = require('./workers/w6-publish');
 const { EvaluateWorker } = require('./workers/w7-evaluate');
 const { Supervisor } = require('./workers/w8-supervisor');
+const { TapeWorker } = require('./workers/w9-tape');
 
-const ROLES = ['all', 'w0', 'w1', 'w2', 'w3', 'w4', 'w5', 'w6', 'w7', 'w8'];
+const ROLES = ['all', 'w0', 'w1', 'w2', 'w3', 'w4', 'w5', 'w6', 'w7', 'w8', 'w9'];
 
 function parseArgs(argv) {
   const flags = { once: false, dry: false, role: null };
@@ -116,11 +118,13 @@ async function main() {
   const publisher = has('w6') ? new PublishWorker() : null;
   const evaluator = has('w7') ? new EvaluateWorker() : null;
   const supervisor = has('w8') ? new Supervisor() : null;
+  const tape = has('w9') ? new TapeWorker() : null;
 
   const timers = [];
   const shutdown = async (signal) => {
     log.info('shutting down', { signal });
     for (const timer of timers) clearInterval(timer);
+    if (tape) await tape.stop().catch(() => {});
     await db.close();
     process.exit(0);
   };
@@ -186,6 +190,11 @@ async function main() {
     await supervisor.heartbeat();
     timers.push(setInterval(makeGuard('heartbeat', () => supervisor.heartbeat()), config.poll.heartbeatMs));
     timers.push(setInterval(makeGuard('housekeeping', () => supervisor.housekeeping()), 3600000));
+  }
+  if (tape) {
+    // The socket is long-lived and must not delay the rest of the pipeline. A failed
+    // connect is retried by the worker itself and is already recorded in sources_health.
+    tape.start().catch((error) => log.error('tape start failed', { error: error.message }));
   }
 
   log.info('harness running', {
