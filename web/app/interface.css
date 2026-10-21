@@ -189,6 +189,10 @@ body {
   animation: rail-sheen 11s linear infinite;
 }
 
+/* The sheen is a background effect. It must stay behind the controls, or it
+   washes a film of light over the labels and the live clock. */
+.rail > * { position: relative; z-index: 1; }
+
 @keyframes rail-sheen {
   from { background-position: 190% 0; }
   to   { background-position: -90% 0; }

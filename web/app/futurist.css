@@ -284,6 +284,21 @@
   padding: 5px;
   border: 1px solid rgba(255, 255, 255, 0.13);
   border-radius: 18px;
+  background: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* The glass sits on a pseudo-element behind the content, never on the scroll
+   container itself. A backdrop-filter on a scroller makes Chrome composite
+   the labels into the same layer it blurs, and the glyphs come out grey and
+   soft even though their colour is correct. */
+.tabs::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
   background:
     linear-gradient(150deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.03) 42%, rgba(255, 255, 255, 0.06) 100%);
   backdrop-filter: blur(26px) saturate(180%);
@@ -293,25 +308,27 @@
     inset 0 -1px 0 rgba(0, 0, 0, 0.5),
     inset 0 0 26px rgba(86, 216, 240, 0.05),
     0 20px 44px rgba(0, 0, 0, 0.55);
-  overflow-x: auto;
-  scrollbar-width: none;
 }
 
 .tabs::-webkit-scrollbar { display: none; }
 
+/* Every label is the same bright ink. The active state is carried by the
+   glass pill and the electric rule, not by making the other tabs dim. */
 .tab {
   position: relative;
+  z-index: 1;
   flex: none;
   padding: 12px 18px 13px;
   border: 1px solid transparent;
   border-radius: 13px;
   background: transparent;
-  color: var(--ink-dim);
+  color: var(--ink);
   font-family: var(--font-display);
-  font-size: 14.5px;
+  font-size: 15.5px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+  text-rendering: optimizeLegibility;
   transition:
     color 0.18s ease,
     background 0.18s ease,
@@ -322,11 +339,11 @@
 
 .tab .sub {
   display: block;
-  font-size: 12.5px;
-  font-weight: 400;
-  letter-spacing: 0.08em;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-dim);
   opacity: 1;
   margin-top: 2px;
 }
