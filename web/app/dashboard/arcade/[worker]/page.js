@@ -59,9 +59,11 @@ export default async function WorkerPage({ params }) {
             {doc.lane} &middot; step {index + 1} of {WORKER_ORDER.length} &middot;{' '}
             <code>{doc.file}</code>
           </p>
-          {live && live.checkedAt ? (
+          {live ? (
             <p className="muted small" style={{ margin: '4px 0 0' }}>
-              health source {live.sources.join(', ')} &middot; last reported {timeAgo(live.checkedAt)}
+              health source {live.sources.join(', ')} &middot; heartbeat{' '}
+              <strong>{live.liveness.toUpperCase()}</strong>
+              {live.checkedAt ? <> &middot; last reported {timeAgo(live.checkedAt)}</> : null}
             </p>
           ) : null}
         </div>
@@ -74,6 +76,18 @@ export default async function WorkerPage({ params }) {
           </svg>
         </div>
       </div>
+
+      {live && (live.liveness === 'stale' || live.liveness === 'silent') ? (
+        <StatusBanner
+          tone={live.liveness === 'silent' ? 'down' : 'warn'}
+          headline={live.liveness === 'silent' ? 'This worker is silent' : 'This worker has missed heartbeats'}
+          facts={[
+            { k: 'last status', v: live.status },
+            { k: 'last report', v: live.checkedAt ? timeAgo(live.checkedAt) : '-' },
+          ]}
+          note={live.detail}
+        />
+      ) : null}
 
       <section className="card">
         <h2>Schedule</h2>

@@ -68,17 +68,69 @@ const TONE = {
   HEALTHY: 'up', OK: 'up', LIVE: 'up',
 };
 
+// How often each source's owner refreshes its `sources_health` row, in ms.
+// These come from the harness schedule, not from taste: W0 market quotes and
+// option premiums every 10s, OI flow every 60s, RSS every 5 min; W1-W7 every
+// 15s; W8 and W9's health timer every 30s.
+export const SOURCE_BEAT_MS = {
+  'yahoo-quotes': 10000,
+  angel: 10000,
+  'angel-options': 10000,
+  'nse-oi-spurts': 60000,
+  rss: 300000,
+  'news-scoring': 15000,
+  'flow-features': 15000,
+  'bias-meter': 15000,
+  'signal-builder': 15000,
+  'risk-gate': 15000,
+  publisher: 15000,
+  evaluator: 15000,
+  'harness-supervisor': 30000,
+  'angel-tape': 30000,
+};
+
+// A row's status word is a claim; its age is the proof. After four missed
+// heartbeat windows the lane is STALE, after twenty it is DOWN - so a worker
+// that wrote HEALTHY and then died cannot keep the board green.
+export const STALE_BEATS = 4;
+export const SILENT_BEATS = 20;
+
 export function statusTone(status) {
   return TONE[String(status).toUpperCase()] || 'muted';
 }
 
-function worstStatus(rows) {
+function shortAge(ms) {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 90) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+// Returns a liveness override for one `sources_health` row, or null when the
+// row is fresh enough (or when the source has no known cadence). Freshness is
+// checked against the source's own beat, so slow sources are not punished for
+// being slow and fast ones are caught quickly.
+export function sourceLiveness(row, now = Date.now()) {
+  if (!row || !row.checked_at) return null;
+  const beat = SOURCE_BEAT_MS[row.source];
+  if (!beat) return null;
+  const age = now - new Date(row.checked_at).getTime();
+  if (!Number.isFinite(age) || age < 0) return null;
+  if (age > beat * SILENT_BEATS) return { status: 'DOWN', age, beat };
+  if (age > beat * STALE_BEATS) return { status: 'STALE', age, beat };
+  return null;
+}
+
+function worstStatus(entries) {
   let worst = null;
-  for (const row of rows) {
-    const rank = STATUS_RANK[String(row.status).toUpperCase()];
+  for (const entry of entries) {
+    const rank = STATUS_RANK[String(entry.status).toUpperCase()];
     if (rank === undefined) continue;
     if (worst === null || rank < worst.rank) {
-      worst = { rank, status: String(row.status).toUpperCase(), detail: row.detail || '-' };
+      worst = { rank, status: String(entry.status).toUpperCase(), detail: entry.detail || '-' };
     }
   }
   return worst;
@@ -86,7 +138,8 @@ function worstStatus(rows) {
 
 // Turns raw `sources_health` rows into per-worker nodes, one per WORKERS entry,
 // in board order. Every node always exists so the board layout never shifts.
-export function buildArcadeWorkers(sources = []) {
+// `now` is injectable so freshness is deterministic in tests.
+export function buildArcadeWorkers(sources = [], now = Date.now()) {
   const bySource = new Map();
   for (const row of sources || []) {
     if (row && row.source) bySource.set(String(row.source), row);
@@ -94,9 +147,38 @@ export function buildArcadeWorkers(sources = []) {
 
   return WORKERS.map((worker) => {
     const rows = worker.sources.map((name) => bySource.get(name)).filter(Boolean);
-    const worst = worstStatus(rows);
+    // Judge every row on freshness first: a stale HEALTHY becomes STALE, a
+    // long-silent one becomes DOWN. The reported word is kept in the detail so
+    // the page can say "last HEALTHY, silent for 2h" instead of hiding it.
+    const judged = rows.map((row) => {
+      const reported = String(row.status).toUpperCase();
+      const liveness = sourceLiveness(row, now);
+      if (!liveness) return { status: reported, detail: row.detail || '-' };
+      const last = reported.toLowerCase();
+      return {
+        status: liveness.status,
+        detail: liveness.status === 'DOWN'
+          ? `silent for ${shortAge(liveness.age)} (last ${last})`
+          : `no heartbeat for ${shortAge(liveness.age)} (last ${last})`,
+      };
+    });
+
+    const worst = worstStatus(judged);
     const reporting = rows.length > 0 && worst !== null;
     const status = reporting ? worst.status : 'UNREPORTED';
+    const newest = rows
+      .map((r) => r.checked_at)
+      .filter(Boolean)
+      .sort((a, b) => new Date(b) - new Date(a))[0] || null;
+    const ageMs = newest ? Math.max(0, now - new Date(newest).getTime()) : null;
+    const liveness = !reporting
+      ? 'unreported'
+      : status === 'DOWN'
+        ? 'silent'
+        : status === 'STALE'
+          ? 'stale'
+          : 'live';
+
     return {
       id: worker.id,
       name: worker.name,
@@ -104,10 +186,12 @@ export function buildArcadeWorkers(sources = []) {
       sources: worker.sources,
       status,
       tone: statusTone(status),
-      detail: reporting ? worst.detail : 'no sources_health row yet - the worker has not run on this database',
-      checkedAt: reporting
-        ? rows.map((r) => r.checked_at).sort((a, b) => new Date(b) - new Date(a))[0]
-        : null,
+      liveness,
+      ageMs,
+      detail: reporting
+        ? worst.detail
+        : 'no sources_health row yet - the worker has not run on this database',
+      checkedAt: newest,
     };
   });
 }

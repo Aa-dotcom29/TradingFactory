@@ -205,7 +205,18 @@ class IngestWorker {
       log.info('market cycle (dry run)', { indices: config.universe.indices.length });
       return { quotes: 0 };
     }
-    if (!isMarketOpen(now)) return { quotes: 0, skipped: 'market-closed' };
+    if (!isMarketOpen(now)) {
+      // A closed market is not a fault - but returning silently leaves the last
+      // in-session row standing for hours, which makes a dead worker look green.
+      // Refresh the rows here so checked_at is a real heartbeat, and say why.
+      await this.markSource('angel',
+        angelConfigured() ? 'IDLE' : 'DISABLED',
+        angelConfigured() ? 'market closed' : 'Angel One credentials not configured');
+      await this.markSource('yahoo-quotes',
+        config.yahoo.enabled ? 'IDLE' : 'DISABLED',
+        config.yahoo.enabled ? 'market closed' : 'Yahoo quotes disabled');
+      return { quotes: 0, skipped: 'market-closed' };
+    }
 
     if (angelConfigured()) {
       try {
@@ -282,11 +293,18 @@ class IngestWorker {
       log.info('option quote cycle (dry run)');
       return { contracts: 0 };
     }
-    if (!angelConfigured()) return { contracts: 0, skipped: 'angel-not-configured' };
+    if (!angelConfigured()) {
+      await this.markSource('angel-options', 'DISABLED', 'Angel One credentials not configured');
+      return { contracts: 0, skipped: 'angel-not-configured' };
+    }
     if (!this.sql) return { contracts: 0, skipped: 'no-database' };
     // A premium is only meaningful while the exchange is trading; out of hours the broker returns a
-    // stale stamp and the row adds nothing W7 can use.
-    if (!isMarketOpen()) return { contracts: 0, skipped: 'market-closed' };
+    // stale stamp and the row adds nothing W7 can use. Mark IDLE rather than returning silently so
+    // the row's checked_at keeps proving the worker is alive.
+    if (!isMarketOpen()) {
+      await this.markSource('angel-options', 'IDLE', 'market closed');
+      return { contracts: 0, skipped: 'market-closed' };
+    }
 
     try {
       await this.ensureTokens();
@@ -384,7 +402,13 @@ class IngestWorker {
     // reading ages. An OI-spurt row carries no stamp at all: the harness dates flow evidence by its
     // capture time, so suppressing a capture would quietly age the bias meter's flow component
     // while the market was open. The saving is not worth moving the brain.
-    if (!isMarketOpen(now)) return { rows: 0, skipped: 'market-closed' };
+    if (!isMarketOpen(now)) {
+      // Outside the session there is nothing to capture, but the row still has
+      // to prove this worker is alive - otherwise an old WARNING or HEALTHY row
+      // reads as current state long after the process stopped.
+      await this.markSource('nse-oi-spurts', 'IDLE', 'market closed');
+      return { rows: 0, skipped: 'market-closed' };
+    }
 
     try {
       const { underlyings, contracts } = await nse.fetchOiSpurts();

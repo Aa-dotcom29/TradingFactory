@@ -97,9 +97,11 @@ export default function ArcadeFlow({ sources = [] }) {
           <p className="hint">
             Every harness worker on one circuit board, wired in run order.
             Dashes and packets show data moving; each LED pulses when its worker
-            last reported healthy. Status is read from sources_health - an
-            unreported lane stays labelled, never coloured. Click any module for
-            that worker&apos;s full end-to-end dossier.
+            last reported healthy. Status is read from sources_health and aged
+            against each worker&apos;s own expected heartbeat, so a lane that
+            stops refreshing turns amber, then red - a stale row can never keep
+            the board green. Click any module for that worker&apos;s full
+            end-to-end dossier.
           </p>
         </div>
         <div className="arcade-totals">
