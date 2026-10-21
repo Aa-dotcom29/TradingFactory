@@ -47,7 +47,6 @@ export default async function OverviewPage() {
 
   const biasTotal = (biasCounts.BULLISH || 0) + (biasCounts.BEARISH || 0) + (biasCounts.NEUTRAL || 0);
   const sources = health.sources || [];
-  const healthy = sources.filter((s) => s.status === 'HEALTHY').length;
   const live = String(mode).toLowerCase() === 'live';
 
   return (
@@ -95,59 +94,6 @@ export default async function OverviewPage() {
         </p>
         <ConsensusMeter counts={biasCounts} />
       </section>
-
-      <div className="stat-row">
-        <div className="stat">
-          <div className="k">News (24h)</div>
-          <div className="v">{counts.news_24h ?? '-'}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Flow rows (24h)</div>
-          <div className="v">{counts.flow_24h ?? '-'}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Stages ready</div>
-          <div className="v">{counts.stages_ready ?? 0}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Candidates queued</div>
-          <div className="v">{counts.candidates_pending ?? 0}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Approved (24h)</div>
-          <div className="v tone-up">{counts.risk_approved_24h ?? 0}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Rejected (24h)</div>
-          <div className="v tone-down">{counts.risk_rejected_24h ?? 0}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Signals (24h)</div>
-          <div className="v">{counts.signals_shadow_24h ?? 0}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Positions open</div>
-          <div className="v">{counts.positions_open ?? 0}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Closed (24h)</div>
-          <div className="v">{counts.outcomes_24h ?? 0}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Win rate</div>
-          <div className={`v${outcomeStats.winRatePct == null ? '' : (outcomeStats.winRatePct >= 50 ? ' tone-up' : ' tone-down')}`}>
-            {outcomeStats.winRatePct == null ? '-' : `${outcomeStats.winRatePct}%`}
-          </div>
-        </div>
-        <div className="stat">
-          <div className="k">Proposals</div>
-          <div className={`v${counts.proposals_pending ? ' tone-warn' : ''}`}>{counts.proposals_pending ?? 0}</div>
-        </div>
-        <div className="stat">
-          <div className="k">Feeds healthy</div>
-          <div className="v">{healthy}<span className="u">of {sources.length}</span></div>
-        </div>
-      </div>
 
       <section className="card">
         <h2>Bias meter</h2>

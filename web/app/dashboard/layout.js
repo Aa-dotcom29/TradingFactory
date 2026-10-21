@@ -11,6 +11,7 @@ import HeartbeatStrip from '@/components/HeartbeatStrip';
 import CommandPalette from '@/components/CommandPalette';
 import ThemeToggle from '@/components/ThemeToggle';
 import NewsBulletin from '@/components/NewsBulletin';
+import BrandMark from '@/components/BrandMark';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +40,7 @@ export default async function DashboardLayout({ children }) {
     <>
       <header className="rail">
         <div className="brand">
-          <span className="mark" aria-hidden="true" />
+          <BrandMark />
           <span>Trading Factory</span>
           <span className="sub">market intelligence</span>
         </div>
