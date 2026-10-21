@@ -99,11 +99,24 @@ export default function FootprintPanel({ analysis, title = 'Footprint', subtitle
             {rows.map((row) => (
               <tr key={row.price}>
                 <th>{num(row.price, 2)}</th>
-                {row.cells.map((cell, index) => (
-                  <td key={`${row.price}-${index}`} className={`fp-cell ${cellTone(cell)}`.trim()}>
-                    <Cell cell={cell} />
-                  </td>
-                ))}
+                {row.cells.map((cell, index) => {
+                  const bar = bars[index];
+                  const label = `${num(row.price, 2)} at ${bar ? barLabel(bar.at) : '-'}`;
+                  const title = cell
+                    ? `${label}: buy ${compact(cell.buy)} x sell ${compact(cell.sell)}${
+                      cell.unknown ? ` + ${compact(cell.unknown)} unsided` : ''
+                    }`
+                    : `${label}: no prints`;
+                  return (
+                    <td
+                      key={`${row.price}-${index}`}
+                      className={`fp-cell ${cellTone(cell)}`.trim()}
+                      title={title}
+                    >
+                      <Cell cell={cell} />
+                    </td>
+                  );
+                })}
                 <td className="mono">{compact(row.total)}</td>
                 <td className={`mono ${row.delta >= 0 ? 'tone-up' : 'tone-down'}`}>{signed(row.delta, 0)}</td>
               </tr>

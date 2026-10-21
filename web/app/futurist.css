@@ -1,0 +1,274 @@
+/* =============================================================================
+   Trading Factory - the futurist layer
+   -----------------------------------------------------------------------------
+   The last of the three references, and the one that adds depth rather than
+   personality.
+
+     * Lusion - a studio known for liquid 3D. What transfers is the material
+       language: matte black, one saturated blue, white sculptural forms, big
+       rounded media containers, and the small crosshair marks that sit along a
+       rule. The board becomes a viewport: a rounded, lit container you look
+       into, with crosshairs on its corners.
+     * The Dribbble "futuristic website" tag - the consistent vocabulary there is
+       a HUD: corner brackets, tick marks, a monospace status strip, and a neon
+       gradient edge that cycles. The neon edge is the one element worth
+       borrowing, because it marks the things that are alive.
+
+   The rules from the other two layers still hold: chroma encodes state, and
+   every readable run of text is at least 15px. The neon edge only ever sits on
+   a live element, so it means "this is running", never "this is pretty".
+   ============================================================================= */
+
+:root {
+  /* A second accent for the neon sweep. Electric blue into signal cyan, the
+     same pair the board already uses for its rails. */
+  --neon-a: #2f4bff;
+  --neon-b: #00d4ff;
+  --neon-c: #7a5cff;
+  --hud-ink: rgba(255, 255, 255, 0.42);
+  --hud-rule: rgba(255, 255, 255, 0.09);
+}
+
+/* -----------------------------------------------------------------------------
+   1. The neon edge
+   A gradient border that cycles hue. It is drawn with a mask so the gradient
+   shows only as the one-pixel edge, and the panel's own surface shows through
+   the middle. Applied to a live signal card and to the board viewport.
+   -------------------------------------------------------------------------- */
+
+.neon-edge {
+  position: relative;
+  isolation: isolate;
+}
+
+.neon-edge::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(from var(--hue, 0deg), var(--neon-a), var(--neon-b), var(--neon-c), var(--neon-a));
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 3;
+  animation: neon-spin 9s linear infinite;
+  opacity: 0.85;
+}
+
+@property --hue {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes neon-spin {
+  to { --hue: 360deg; }
+}
+
+/* Where the browser does not support the custom property animation, the edge
+   still reads as a neon gradient - it simply does not cycle. */
+@supports not (background: conic-gradient(from var(--hue, 0deg), red, blue)) {
+  .neon-edge::after { animation: none; }
+}
+
+/* -----------------------------------------------------------------------------
+   2. The HUD status strip
+   A monospace instrument bar. Every value in it is real: the exchange clock
+   ticks, the client tag is this tab's own counter, and the counts are the
+   lane totals the board is already showing.
+   -------------------------------------------------------------------------- */
+
+.hud-strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 26px;
+  padding: 0 2px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--hud-rule);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.028), transparent);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--hud-ink);
+  text-transform: uppercase;
+}
+
+.hud-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  border-right: 1px solid var(--hud-rule);
+  white-space: nowrap;
+}
+
+.hud-cell:first-child { padding-left: 12px; }
+
+.hud-key { color: rgba(255, 255, 255, 0.3); }
+
+.hud-id { color: var(--ink-dim); }
+
+.hud-led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--sig);
+  box-shadow: 0 0 8px rgba(86, 216, 240, 0.8);
+  animation: hud-blink 2.4s ease-in-out infinite;
+}
+
+@keyframes hud-blink {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.hud-strip.tone-up .hud-led { background: var(--up); box-shadow: 0 0 9px rgba(46, 208, 127, 0.85); }
+.hud-strip.tone-warn .hud-led { background: var(--warn); box-shadow: 0 0 9px rgba(255, 181, 71, 0.85); }
+.hud-strip.tone-down .hud-led { background: var(--down); box-shadow: 0 0 9px rgba(255, 93, 82, 0.9); }
+
+/* A light that travels along the strip, the way a scanner crosses a readout. */
+.hud-sweep {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 120px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: linear-gradient(90deg, transparent, rgba(86, 216, 240, 0.09), transparent);
+  animation: hud-scan 7s linear infinite;
+}
+
+@keyframes hud-scan {
+  from { transform: translateX(-140px); }
+  to   { transform: translateX(calc(100% + 140px)); }
+}
+
+/* -----------------------------------------------------------------------------
+   3. The board as a viewport
+   Lusion's rounded media container, with crosshair marks on the corners and a
+   faint scanline wash across the glass.
+   -------------------------------------------------------------------------- */
+
+.arcade-board-scroll {
+  position: relative;
+  border-radius: 16px;
+  border: 1px solid var(--hair-ink);
+  background: #04060a;
+  overflow: hidden;
+  padding: 0;
+}
+
+.arcade-board-scroll::before {
+  /* Crosshair marks at the corners: a short vertical and a short horizontal
+     line, the way a targeting reticle brackets a viewport. */
+  content: '';
+  position: absolute;
+  inset: 6px;
+  pointer-events: none;
+  z-index: 2;
+  background:
+    linear-gradient(var(--sig), var(--sig)) 0 0 / 11px 1px no-repeat,
+    linear-gradient(var(--sig), var(--sig)) 0 0 / 1px 11px no-repeat,
+    linear-gradient(var(--sig), var(--sig)) 100% 0 / 11px 1px no-repeat,
+    linear-gradient(var(--sig), var(--sig)) 100% 0 / 1px 11px no-repeat,
+    linear-gradient(var(--sig), var(--sig)) 0 100% / 11px 1px no-repeat,
+    linear-gradient(var(--sig), var(--sig)) 0 100% / 1px 11px no-repeat,
+    linear-gradient(var(--sig), var(--sig)) 100% 100% / 11px 1px no-repeat,
+    linear-gradient(var(--sig), var(--sig)) 100% 100% / 1px 11px no-repeat;
+  opacity: 0.55;
+}
+
+.arcade-board-scroll::after {
+  /* A very faint horizontal scan wash, the way an old display refreshes. */
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: repeating-linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.014) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+.arcade-svg { position: relative; z-index: 2; }
+
+/* -----------------------------------------------------------------------------
+   4. The live signal card gets the neon edge
+   Only an actionable card earns it. A voided or exited signal is history, and
+   history does not glow.
+   -------------------------------------------------------------------------- */
+
+.sig-card:not(.sig-blocked) {
+  position: relative;
+  isolation: isolate;
+}
+
+.sig-card:not(.sig-blocked)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(from var(--hue, 0deg), var(--neon-a), var(--neon-b), var(--neon-c), var(--neon-a));
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 4;
+  animation: neon-spin 9s linear infinite;
+  opacity: 0.6;
+}
+
+.sig-card:not(.sig-blocked):hover::after { opacity: 1; }
+
+/* -----------------------------------------------------------------------------
+   5. Depth
+   The palette and drawer are the two surfaces that leave the black world, so
+   they get a real cast shadow and an inner light.
+   -------------------------------------------------------------------------- */
+
+.cmdk {
+  box-shadow:
+    0 40px 110px rgba(0, 0, 0, 0.92),
+    0 0 0 1px var(--hair-ink),
+    0 0 60px rgba(47, 75, 255, 0.16);
+}
+
+.drawer {
+  box-shadow: -40px 0 110px rgba(0, 0, 0, 0.9), -1px 0 0 var(--hair-ink);
+}
+
+/* A hairline of light along the top of every panel, so the black has a
+   direction of light rather than being flat. */
+.card,
+.details.collapsible,
+.sig-archive {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.028), transparent 90px);
+}
+
+/* -----------------------------------------------------------------------------
+   6. Motion is opt-out
+   -------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .neon-edge::after,
+  .sig-card:not(.sig-blocked)::after { animation: none; }
+  .hud-sweep { animation: none; opacity: 0; }
+  .hud-led { animation: none; opacity: 1; }
+}

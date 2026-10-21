@@ -38,7 +38,7 @@ export default async function WorkerPage({ params }) {
       <div className="page-head">
         <div style={{ flex: 1, minWidth: 260 }}>
           <p className="muted small" style={{ margin: '0 0 6px' }}>
-            <Link href="/dashboard/arcade">&larr; back to Agent Arcade</Link>
+            <Link href="/dashboard/arcade">&larr; back to Agents Workspace</Link>
             <span style={{ marginLeft: 12 }}><LiveRefresh seconds={10} /></span>
           </p>
           <h1>

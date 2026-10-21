@@ -3,6 +3,7 @@ import {
   getSignals, getFlow, getNews, getEntityFeatures, getFlowFeatures, getBias,
   getSignalStages, getSignalCandidates, getRiskDecisions, getHorizonPulse,
   getOutcomes, getOutcomeStats, getOpenPositions, getTradesForSignals,
+  getSignalEvidence, getIndexTimeframeBias,
 } from '@/lib/queries';
 import { getCurrentUser } from '@/lib/auth';
 import { horizonByKey } from '@/lib/horizons';
@@ -18,8 +19,22 @@ import EntityIntel from '@/components/EntityIntel';
 import FlowFeatures from '@/components/FlowFeatures';
 import BiasPanel from '@/components/BiasPanel';
 import NewsList from '@/components/NewsList';
+import Collapsible from '@/components/Collapsible';
+import TimeframeAlignment from '@/components/TimeframeAlignment';
 
 export const dynamic = 'force-dynamic';
+
+// The index names that have a stored quote stream, in the order a reader
+// expects them. A name with no quotes in the window is left out entirely
+// rather than shown with an empty alignment.
+const INDEX_ORDER = ['NIFTY', 'MIDCPNIFTY', 'BANKNIFTY', 'SENSEX'];
+
+function horizonIndexRows(timeframes) {
+  if (!timeframes) return [];
+  return INDEX_ORDER
+    .filter((symbol) => timeframes[symbol])
+    .map((symbol) => ({ symbol, read: timeframes[symbol] }));
+}
 
 export async function generateMetadata({ params }) {
   const { horizon } = await params;
@@ -33,7 +48,7 @@ export default async function HorizonPage({ params }) {
   if (!horizon) notFound();
 
   const user = await getCurrentUser();
-  const [signals, flow, news, entityData, flowFeatures, bias, stages, candidates, riskDecisions, pulse, closed, outcomeStats, openPositions] = await Promise.all([
+  const [signals, flow, news, entityData, flowFeatures, bias, stages, candidates, riskDecisions, pulse, closed, outcomeStats, openPositions, timeframes] = await Promise.all([
     getSignals(horizon.key),
     getFlow(horizon.key === 'POSITIONAL' ? 12 : 20),
     getNews(20),
@@ -47,10 +62,12 @@ export default async function HorizonPage({ params }) {
     getOutcomes(horizon.key, 10),
     getOutcomeStats(horizon.key),
     getOpenPositions(horizon.key, 8),
+    getIndexTimeframeBias(),
   ]);
 
   const email = String((user && user.email) || '').trim().toLowerCase();
   const tradesBySignal = await getTradesForSignals(signals.map((signal) => signal.id), email);
+  const evidenceBySignal = await getSignalEvidence(signals.map((signal) => signal.id));
   const live = publishModeFor(horizon.key) === 'live';
 
   return (
@@ -70,7 +87,11 @@ export default async function HorizonPage({ params }) {
 
       <StatusBanner
         tone={pulse.ready > 0 ? 'up' : 'sig'}
-        headline={pulse.ready > 0 ? `${pulse.ready} ready for the gate` : 'No names ready yet'}
+        headline={pulse.ready > 0
+          ? `${pulse.ready} ready for the gate`
+          : pulse.published24h > 0
+            ? `Nothing at the gate now - ${pulse.published24h} published in 24h`
+            : 'No names ready yet'}
         facts={[
           { k: 'tracked', v: pulse.tracked },
           { k: 'bullish', v: pulse.bullish },
@@ -79,28 +100,66 @@ export default async function HorizonPage({ params }) {
           { k: 'open', v: pulse.openPositions },
           { k: 'closed 24h', v: pulse.closed24h },
           { k: 'approved 24h', v: pulse.approved24h },
-          { k: 'delivered 24h', v: pulse.published24h },
+          { k: 'published 24h', v: pulse.published24h },
         ]}
         note={
           `${horizon.label} candidates are raised at READY and must clear every gate before anything is published. ` +
+          'READY counts the names waiting at the gate right now; a market that is closed sends every ' +
+          'name back to IDLE, so an empty gate is not the same as no signal. ' +
           (live
             ? 'Delivery is live; approved signals go to the household channel and execution is manual.'
             : 'Delivery is in shadow, so nothing is being sent yet - the ledger is still written in full.')
         }
       />
 
+      {/* Published signals come first: this is the panel a trader acts on, so it
+          should not be buried under the diagnostic panels that explain it. */}
+      <section className="card">
+        <h2>Published signals</h2>
+        <p className="hint">
+          Risk-gated, versioned signals. Shadow signals are paper-only and were not delivered.
+          Option plans are scored on their own premium series, not on the underlying spot; a plan
+          with no premium print is marked unpriced rather than stopped out on spot. Click a card
+          for the full analysis behind it.
+        </p>
+        <SignalList
+          signals={signals}
+          horizonLabel={horizon.label.toLowerCase()}
+          tradesBySignal={tradesBySignal}
+          evidenceBySignal={evidenceBySignal}
+          timeframesBySymbol={timeframes}
+        />
+      </section>
+
       <section className="card">
         <h2>Bias meter</h2>
         <p className="hint">
           {horizon.label}-horizon verdict per tracked symbol, strongest first. Score and
           confidence come from the bias worker; a direction is only called above the confidence
-          floor.
+          floor. Click a name for its full breakdown.
         </p>
         <BiasPanel rows={bias} />
+        {horizonIndexRows(timeframes).length ? (
+          <>
+            <div className="hr" />
+            <h3>Timeframe alignment</h3>
+            <p className="hint">
+              5-minute and 15-minute structure from stored quotes, for the index names. ALIGNED
+              means the short and long reads agree; DIVERGED means they do not.
+            </p>
+            <div className="tf-grid">
+              {horizonIndexRows(timeframes).map((row) => (
+                <TimeframeAlignment key={row.symbol} read={row.read} symbol={row.symbol} />
+              ))}
+            </div>
+          </>
+        ) : null}
       </section>
 
-      <section className="card">
-        <h2>Signal lifecycle</h2>
+      <Collapsible
+        title="Signal lifecycle"
+        hint="Where each name sits in the pipeline, and the candidates waiting at the gate"
+      >
         <p className="hint">
           Each name moves through IDLE -&gt; WATCH -&gt; BUILDING -&gt; READY as evidence and
           liquidity allow. READY means there is a complete, liquid plan; the reasons column
@@ -113,41 +172,31 @@ export default async function HorizonPage({ params }) {
           anything is published.
         </p>
         <SignalCandidates candidates={candidates} />
-      </section>
+      </Collapsible>
 
-      <section className="card">
-        <h2>Published signals</h2>
-        <p className="hint">
-          Risk-gated, versioned signals. Shadow signals are paper-only and were not delivered.
-          Option plans are scored on their own premium series, not on the underlying spot; a plan
-          with no premium print is marked unpriced rather than stopped out on spot.
-        </p>
-        <SignalList
-          signals={signals}
-          horizonLabel={horizon.label.toLowerCase()}
-          tradesBySignal={tradesBySignal}
-        />
-      </section>
-
-      <section className="card">
-        <h2>Risk gate</h2>
+      <Collapsible
+        title="Risk gate"
+        hint="Every check the gate ran on this horizon's candidates"
+      >
         <p className="hint">
           The gate's judgements on this horizon's candidates, each with the check list behind it.
           A candidate is only published once every gate passes; a deferred row means the market
           was closed.
         </p>
         <RiskDecisions decisions={riskDecisions} />
-      </section>
+      </Collapsible>
 
-      <section className="card">
-        <h2>Outcomes</h2>
+      <Collapsible
+        title="Outcomes"
+        hint="Settled positions: the exit, the level that ended them, and how far they ran"
+      >
         <p className="hint">
           {horizon.label}-horizon positions that have been settled: their exit, the level that ended
           them, and how far they ran either side before closing. This is also what the risk gate
           reads to decide whether this horizon has earned the right to keep trading.
         </p>
         <Outcomes stats={outcomeStats} closed={closed} open={openPositions} />
-      </section>
+      </Collapsible>
 
       {horizon.flow ? (
         <div className="grid cols-2">
@@ -156,47 +205,51 @@ export default async function HorizonPage({ params }) {
             <p className="hint">Latest NSE OI-spurt snapshot, ranked by open-interest move.</p>
             <FlowPanel flow={flow} />
           </section>
-          <section className="card">
-            <h2>Underlying futures OI</h2>
+          <Collapsible
+            title="Underlying futures OI"
+            hint="Open-interest change by underlying"
+          >
             <p className="hint">Open-interest change by underlying.</p>
             <FlowUnderlyings rows={flow.underlyings || []} />
-          </section>
+          </Collapsible>
         </div>
       ) : (
-        <section className="card">
-          <h2>Flow</h2>
+        <Collapsible title="Flow" hint="Open-interest change by underlying">
           <p className="hint">
             Positional decisions lean on trend and fundamentals rather than minute-level flow, so
             OI spurts are intentionally not surfaced here.
           </p>
           <FlowUnderlyings rows={(flow.underlyings || []).slice(0, 12)} />
-        </section>
+        </Collapsible>
       )}
 
       <div className="grid cols-2">
-        <section className="card">
-          <h2>Flow features</h2>
+        <Collapsible
+          title="Flow features"
+          hint="Per-symbol option-flow features from the OI-spurt snapshot"
+        >
           <p className="hint">
             Per-symbol option-flow features derived from the OI-spurt snapshot - CE and PE
             open-interest change, put-call ratio and the build-up mix.
           </p>
           <FlowFeatures data={flowFeatures} limit={8} />
-        </section>
+        </Collapsible>
 
-        <section className="card">
-          <h2>Entity pressure</h2>
+        <Collapsible
+          title="Entity pressure"
+          hint="Scored headlines rolled up per entity over the last 48 hours"
+        >
           <p className="hint">
             Scored headlines rolled up per entity over the last 48 hours.
           </p>
           <EntityIntel data={entityData} limit={8} />
-        </section>
+        </Collapsible>
       </div>
 
-      <section className="card">
-        <h2>News</h2>
+      <Collapsible title="News" hint="Recent scored headlines affecting this horizon">
         <p className="hint">Recent scored headlines affecting this horizon.</p>
         <NewsList items={news} />
-      </section>
+      </Collapsible>
     </div>
   );
 }

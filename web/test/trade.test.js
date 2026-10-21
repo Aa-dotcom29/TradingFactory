@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseExpiry, optionContractKey, computeMomentum, computeTradePnl,
-  computeTheta, findContract, sparklinePoints,
+  computeTheta, findContract, sparklinePoints, nearestSampleIndex,
 } from '../lib/trade.js';
 
 test('parseExpiry accepts the shapes the harness and NSE use', () => {
@@ -88,4 +88,22 @@ test('sparklinePoints needs at least two samples', () => {
   assert.equal(sparklinePoints([{ ltp: 100 }]), '');
   const points = sparklinePoints([{ ltp: 100 }, { ltp: 110 }], 10, 10);
   assert.equal(points, '0.0,10.0 10.0,0.0');
+});
+
+test('nearestSampleIndex snaps a pointer to a real sample and clamps at the edges', () => {
+  assert.equal(nearestSampleIndex(0, 5), 0);
+  assert.equal(nearestSampleIndex(1, 5), 4);
+  assert.equal(nearestSampleIndex(0.5, 5), 2);
+  assert.equal(nearestSampleIndex(-3, 5), 0);
+  assert.equal(nearestSampleIndex(9, 5), 4);
+  assert.equal(nearestSampleIndex(0.4, 3), 1);
+  assert.equal(nearestSampleIndex(0.2, 3), 0);
+});
+
+test('nearestSampleIndex never returns an index without samples', () => {
+  assert.equal(nearestSampleIndex(0.5, 0), -1);
+  assert.equal(nearestSampleIndex(0.5, -1), -1);
+  assert.equal(nearestSampleIndex(0.5, 'x'), -1);
+  assert.equal(nearestSampleIndex(0.5, 1), 0);
+  assert.equal(nearestSampleIndex(NaN, 4), 0);
 });

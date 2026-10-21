@@ -5,7 +5,7 @@ import StatusBanner from '@/components/StatusBanner';
 
 export const dynamic = 'force-dynamic';
 
-export const metadata = { title: 'Agent Arcade - Trading Factory' };
+export const metadata = { title: 'Agents Workspace - Trading Factory' };
 
 // The one page whose whole job is to make the harness legible. The pipeline
 // chain, the support lanes and one continuous animation that proves the system
@@ -17,7 +17,7 @@ export default async function ArcadePage() {
     <div className="stack">
       <div className="page-head">
         <div style={{ flex: 1, minWidth: 260 }}>
-          <h1>Agent Arcade</h1>
+          <h1>Agents Workspace</h1>
           <p className="muted small" style={{ margin: '5px 0 0' }}>
             One glance at the whole lifecycle - what runs, in what order, and
             whether each lane is actually alive.

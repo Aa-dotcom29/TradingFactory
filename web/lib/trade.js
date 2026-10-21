@@ -233,3 +233,16 @@ export function sparklinePoints(series = [], width = 320, height = 64) {
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ');
 }
+
+// Maps a pointer's horizontal ratio across a chart (0 at the left edge, 1 at
+// the right) to the nearest sample index. Used by the interactive price chart
+// to snap its crosshair to a real stored sample instead of interpolating a
+// value that was never observed.
+export function nearestSampleIndex(ratio, count) {
+  const n = Math.floor(Number(count));
+  if (!Number.isFinite(n) || n <= 0) return -1;
+  if (n === 1) return 0;
+  const r = Number(ratio);
+  if (!Number.isFinite(r)) return 0;
+  return Math.max(0, Math.min(n - 1, Math.round(r * (n - 1))));
+}

@@ -10,7 +10,6 @@ import RiskDecisions from '@/components/RiskDecisions';
 import Outcomes from '@/components/Outcomes';
 import Proposals from '@/components/Proposals';
 import HealthTable from '@/components/HealthTable';
-import PipelineStrip from '@/components/PipelineStrip';
 import ConsensusMeter from '@/components/ConsensusMeter';
 import StatusBanner from '@/components/StatusBanner';
 import ArcadeHook from '@/components/ArcadeHook';
@@ -51,33 +50,6 @@ export default async function OverviewPage() {
   const healthy = sources.filter((s) => s.status === 'HEALTHY').length;
   const live = String(mode).toLowerCase() === 'live';
 
-  // The chain, stage by stage, with the real number of rows each worker handed on.
-  const pipeline = [
-    { id: 'W0', name: 'Ingest', value: healthy, unit: `of ${sources.length} feeds`, note: 'NSE / RSS / quotes' },
-    { id: 'W1', name: 'News', value: counts.news_24h ?? 0, unit: '24h', note: `${counts.news_total ?? 0} scored all time` },
-    { id: 'W2', name: 'Flow', value: counts.flow_24h ?? 0, unit: '24h', note: 'OI-spurt rows' },
-    { id: 'W3', name: 'Bias', value: biasTotal, unit: 'pairs', note: `${biasCounts.BULLISH || 0} bullish` },
-    { id: 'W4', name: 'Signal', value: counts.candidates_pending ?? 0, unit: 'queued', note: `${stageCounts.READY || 0} ready` },
-    { id: 'W5', name: 'Risk', value: counts.risk_approved_24h ?? 0, unit: 'approved', note: `${counts.risk_rejected_24h ?? 0} rejected 24h` },
-    {
-      id: 'W6',
-      name: 'Publish',
-      value: counts.signals_shadow_24h ?? 0,
-      unit: '24h',
-      note: live ? 'delivered to Telegram' : (mixed ? 'mixed: some horizons live' : 'shadow only, nothing sent'),
-    },
-    {
-      id: 'W7',
-      name: 'Evaluate',
-      value: counts.outcomes_24h ?? 0,
-      unit: 'closed 24h',
-      note: outcomeStats.total
-        ? `${counts.positions_open ?? 0} still open, ${outcomeStats.winRatePct ?? '-'}% win rate`
-        : `${counts.positions_open ?? 0} still open`,
-      terminal: true,
-    },
-  ];
-
   return (
     <div className="stack">
       <div className="page-head">
@@ -114,9 +86,6 @@ export default async function OverviewPage() {
           }
         />
       )}
-
-      <PipelineStrip nodes={pipeline} />
-      <ArcadeHook sources={sources} />
 
       <section className="card">
         <h2>House read</h2>
@@ -271,6 +240,11 @@ export default async function OverviewPage() {
         <p className="hint">Reported by the supervisor worker each cycle. A disabled source says so rather than failing silently.</p>
         <HealthTable sources={health.sources} />
       </section>
+
+      {/* The workspace hook sits at the foot of the page: it is the way into
+          the full board, and the board itself is a separate destination, so it
+          does not belong above the market read. */}
+      <ArcadeHook sources={sources} />
     </div>
   );
 }

@@ -1,0 +1,509 @@
+/* =============================================================================
+   Trading Factory - the aesthetic layer
+   -----------------------------------------------------------------------------
+   Inspired by textura.agency.
+
+   What is borrowed, and why it works for a market terminal:
+
+     * A true black canvas with film grain over it. The grain is what makes a
+       black screen read as a material rather than a switched-off display.
+     * Extreme scale contrast. Textura sets a 120px hairline headline against
+       12px body copy. A terminal can only borrow the direction of that move -
+       a large editorial serif for the page and section voices, a small
+       technical sans for everything that is read as a label.
+     * A serif display against a technical sans. The serif is the brand voice:
+       it appears on the wordmark, the page titles and the drawer title, and
+       nowhere else. Every number stays in the mono face, because a serif
+       with old-style figures would make a price unreadable.
+     * Hairline rules instead of panels. Borders are 0.8px, nearly invisible,
+       and the surfaces stay flat.
+     * Pill actions. The one thing a person must act on is a solid light pill
+       on black - the highest-contrast object on the page.
+     * One electric accent, used only for brand chrome and never for state.
+       Green is up, red is down, amber is caution. That rule is not negotiable,
+       so the accent is confined to the wordmark, the bulletin band and the
+       active tab.
+
+   This file sits after interface.css in the cascade, so it is the last word
+   on surfaces, materials and motion.
+   ============================================================================= */
+
+:root {
+  /* The editorial face. No web font: a remote download is one more thing that
+     can fail at 3am, and a trading terminal should not depend on the network
+     to render its own title. These are all faces the OS already has, and the
+     stack degrades to Georgia, which every machine has. */
+  --font-editorial: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, 'Times New Roman', serif;
+
+  /* The brand accent. Chrome only - it never encodes a market state. */
+  --electric: #2f4bff;
+  --electric-2: #5570ff;
+  --electric-glow: rgba(47, 75, 255, 0.34);
+
+  /* The hairline. */
+  --hair: 0.8px;
+  --hair-ink: rgba(255, 255, 255, 0.12);
+  --hair-ink-hi: rgba(255, 255, 255, 0.26);
+
+  /* Film grain. A single inline SVG turbulence, tiled. ASCII by construction. */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)' opacity='0.42'/%3E%3C/svg%3E");
+}
+
+/* -----------------------------------------------------------------------------
+   1. The black canvas
+   -------------------------------------------------------------------------- */
+
+html, body {
+  background: #000;
+}
+
+/* The grain sits above the canvas and below the content, so it never eats a
+   glyph but it does sit on every surface. */
+body::before {
+  background-image: var(--grain);
+  background-size: 220px 220px;
+  opacity: 0.05;
+  animation: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+  z-index: 0;
+}
+
+body::after {
+  /* One cold pool of light at the top edge, and nothing else. Textura keeps
+     the canvas almost entirely black; a single pool gives depth without
+     turning the page into a gradient wallpaper. */
+  background:
+    radial-gradient(70vw 34vh at 50% -12%, rgba(47, 75, 255, 0.16), transparent 66%),
+    radial-gradient(52vw 30vh at 12% 104%, rgba(47, 75, 255, 0.07), transparent 70%);
+  animation: none;
+  z-index: 0;
+}
+
+/* The content sits above the grain. */
+main.wrap, header.rail, nav.tabs, .bulletin { position: relative; z-index: 1; }
+
+/* -----------------------------------------------------------------------------
+   2. Surfaces - flat black with a hairline, not glass
+   -------------------------------------------------------------------------- */
+
+.card,
+.details.collapsible,
+.arcade-hook,
+.sig-archive,
+.cmdk,
+.drawer {
+  background: #05070a;
+  background-image: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: var(--hair) solid var(--hair-ink);
+  box-shadow: none;
+  border-radius: 2px;
+}
+
+.card:hover,
+.details.collapsible:hover {
+  border-color: var(--hair-ink-hi);
+  box-shadow: none;
+}
+
+.card::before,
+.card::after {
+  /* The corner brackets stay: they are the instrument-plate signature. */
+  border-color: var(--hair-ink-hi);
+  opacity: 0.9;
+}
+
+.card > h2::before {
+  background: var(--electric);
+  box-shadow: 0 0 12px var(--electric-glow);
+}
+
+/* The rail becomes a single black band with one lit rule under it. */
+.rail {
+  background: #000;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: var(--hair) solid var(--hair-ink);
+  box-shadow: none;
+  height: 56px;
+}
+
+.rail::after {
+  /* The sheen becomes a thin lit rule that travels along the bottom edge, which
+     is the same idea as the sweep on Textura's bands but at instrument scale. */
+  background: linear-gradient(90deg, transparent 40%, var(--electric-2) 50%, transparent 60%);
+  background-size: 200% 100%;
+  height: 1px;
+  top: auto;
+  bottom: 0;
+  animation: rail-sweep 9s linear infinite;
+}
+
+@keyframes rail-sweep {
+  from { background-position: 180% 0; }
+  to   { background-position: -80% 0; }
+}
+
+/* The tabs become a bordered strip with a dot between each item, which is
+   Textura's menu pattern. The dot is drawn with a border, not a character. */
+.tabs {
+  background: #000;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: var(--hair) solid var(--hair-ink);
+  padding: 0 14px;
+  gap: 0;
+}
+
+.tab {
+  padding: 13px 15px 14px;
+  color: var(--ink-faint);
+  border-right: var(--hair) solid var(--hair-ink);
+  position: relative;
+}
+
+.tab:first-child { border-left: var(--hair) solid var(--hair-ink); }
+
+.tab .sub {
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  opacity: 0.72;
+}
+
+.tab::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  right: 50%;
+  bottom: -1px;
+  height: 2px;
+  background: var(--electric);
+  box-shadow: 0 0 14px var(--electric-glow);
+  transition: left 0.24s cubic-bezier(0.2, 0.8, 0.2, 1), right 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.tab:hover { background: rgba(255, 255, 255, 0.03); color: var(--ink-dim); }
+.tab.active { color: var(--ink); }
+.tab.active::after { left: 0; right: 0; }
+
+/* -----------------------------------------------------------------------------
+   3. The editorial voice
+   The serif speaks in titles only. Nothing that carries a number, a price or a
+   timestamp ever takes this face.
+   -------------------------------------------------------------------------- */
+
+.brand > span:nth-child(2) {
+  font-family: var(--font-editorial);
+  font-size: 25px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  line-height: 1;
+}
+
+.brand .sub {
+  font-size: 12px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  padding-top: 6px;
+}
+
+.brand .mark {
+  background: transparent;
+  border: 1.5px solid var(--electric-2);
+  box-shadow: 0 0 18px var(--electric-glow), inset 0 0 12px rgba(47, 75, 255, 0.2);
+}
+
+.page-head h1 {
+  font-family: var(--font-editorial);
+  font-size: clamp(38px, 5.2vw, 62px);
+  font-weight: 400;
+  line-height: 0.98;
+  letter-spacing: -0.015em;
+  text-transform: none;
+  color: #f4f6f8;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  animation: none;
+  margin: 0;
+}
+
+.card > h2,
+.arcade-head h2,
+.collapsible-title {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  animation: none;
+}
+
+.drawer-title {
+  font-family: var(--font-editorial);
+  font-size: 34px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+  color: #f4f6f8;
+}
+
+.drawer-title .muted { font-size: 19px; }
+
+/* The big instrument name on a signal card is the page's biggest number-free
+   object, so it takes the editorial face too. */
+.sig-symbol {
+  font-family: var(--font-editorial);
+  font-size: 44px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  text-shadow: none;
+}
+
+.sig-underlying {
+  font-family: var(--font-editorial);
+  font-size: 23px;
+  font-weight: 400;
+  color: var(--ink-dim);
+}
+
+/* The strike stays monospaced: it is a number, and a number in a serif with
+   old-style figures is a misread waiting to happen. */
+.sig-strike { font-size: 27px; }
+
+/* -----------------------------------------------------------------------------
+   4. Pill actions
+   The one thing to act on is a solid light pill on black. Everything else is
+   a hairline.
+   -------------------------------------------------------------------------- */
+
+.btn {
+  border-radius: 100px;
+  padding: 10px 20px;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  border: var(--hair) solid var(--hair-ink-hi);
+  background: transparent;
+  color: var(--ink);
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+
+.btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--hair-ink-hi);
+  color: #fff;
+}
+
+.btn.ghost { color: var(--ink-faint); }
+.btn.ghost:hover { background: rgba(255, 255, 255, 0.04); color: var(--ink); }
+
+/* The primary action on a signal: solid, light, unmistakable. */
+.sig-open,
+.sig-card .btn:not(.ghost) {
+  border-radius: 100px;
+  background: #f2f4f6;
+  color: #05070a;
+  border-color: #f2f4f6;
+  font-weight: 700;
+  box-shadow: none;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
+.sig-open:hover,
+.sig-card .btn:not(.ghost):hover {
+  background: #ffffff;
+  color: #05070a;
+  box-shadow: 0 0 22px rgba(255, 255, 255, 0.22);
+  transform: translateY(-1px);
+}
+
+.view-chip {
+  border-radius: 100px;
+  border: var(--hair) solid var(--hair-ink);
+  background: transparent;
+  color: var(--ink-faint);
+  transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+
+.view-chip:hover { border-color: var(--hair-ink-hi); color: var(--ink-dim); }
+
+.view-chip.active {
+  background: #f2f4f6;
+  border-color: #f2f4f6;
+  color: #05070a;
+  box-shadow: none;
+}
+
+.palette-trigger,
+.theme-toggle,
+.heartbeat {
+  border-radius: 100px;
+  border: var(--hair) solid var(--hair-ink);
+  background: #05070a;
+}
+
+.palette-trigger:hover,
+.theme-toggle:hover,
+.heartbeat:hover { border-color: var(--hair-ink-hi); box-shadow: none; }
+
+/* The palette and the drawer are the two moments that leave the black world,
+   so they get the one saturated accent in the interface. */
+.cmdk {
+  border: var(--hair) solid var(--electric);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.85), 0 0 0 1px var(--electric-glow);
+}
+
+.cmdk-input { border-bottom-color: var(--electric); }
+.cmdk-group-label { color: var(--electric-2); }
+.cmdk-item:hover, .cmdk-item.active { background: rgba(47, 75, 255, 0.16); border-left-color: var(--electric); }
+
+.drawer {
+  border-left: var(--hair) solid var(--electric);
+  box-shadow: -30px 0 90px rgba(0, 0, 0, 0.85);
+}
+
+.drawer-section h3 { color: var(--electric-2); }
+
+/* -----------------------------------------------------------------------------
+   5. The bulletin band
+   A solid electric block at the head of the ticker, the way Textura sets a
+   full-bleed colour band against the black.
+   -------------------------------------------------------------------------- */
+
+.bulletin {
+  background: #000;
+  border-bottom: var(--hair) solid var(--hair-ink);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  height: 36px;
+}
+
+.bulletin-label {
+  background: var(--electric);
+  color: #ffffff;
+  border-right: none;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  padding: 0 16px;
+}
+
+.bulletin-label::before {
+  background: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.9);
+}
+
+.bulletin-item { border-right-color: var(--hair-ink); }
+.bulletin-item a { color: var(--ink-dim); }
+.bulletin-item a:hover { color: #fff; }
+
+/* -----------------------------------------------------------------------------
+   6. The signal card
+   Flat black, a hairline, a left accent in the state colour, and the
+   instrument name in the editorial face.
+   -------------------------------------------------------------------------- */
+
+.sig-card {
+  background: #05070a;
+  border: var(--hair) solid var(--hair-ink);
+  border-left: 2px solid var(--hair-ink-hi);
+  box-shadow: none;
+  border-radius: 2px;
+}
+
+.sig-card:hover {
+  border-color: var(--hair-ink-hi);
+  border-left-color: var(--sig);
+  box-shadow: none;
+  transform: none;
+}
+
+.sig-confirm {
+  background: var(--hair-ink);
+  border-color: var(--hair-ink);
+}
+
+.sig-confirm-item { background: #080b0f; }
+.sig-confirm-item .k { color: var(--ink-faint); }
+
+.sig-levels { border-color: var(--hair-ink); }
+.stat { background: #080b0f; }
+.stat:hover { background: #0b0f14; }
+
+/* A version string is a label, not a price. It gets the small size so it does
+   not wrap in a narrow tile. */
+.sig-levels .stat .v.small { font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
+
+.drawer-levels,
+.drawer-components,
+.evidence-kv { background: var(--hair-ink); border-color: var(--hair-ink); }
+.drawer-levels .stat, .drawer-component { background: #080b0f; }
+
+/* Six plan figures in three columns: two clean rows, no orphan tile with a
+   wide empty gutter beside it. */
+.drawer-levels { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.evidence { border-top-color: var(--hair-ink); }
+.evidence-links { border-top-color: var(--hair-ink); }
+
+.collapsible { border-radius: 2px; }
+.collapsible-marker { color: var(--electric-2); }
+
+.tf-align { background: #080b0f; border-color: var(--hair-ink); }
+.tf-verdict { border-color: var(--hair-ink); }
+
+.bias-row:hover { background: rgba(255, 255, 255, 0.04); }
+.bias-row:focus-within { background: rgba(255, 255, 255, 0.04); }
+
+.bulletin-viewport:hover .bulletin-track { animation-play-state: paused; }
+
+/* -----------------------------------------------------------------------------
+   7. Scroll reveal
+   Panels rise into place as they enter the viewport. This is the motion
+   signature of the reference site, and it is the one that most improves the
+   feel of a long scrolling page.
+   -------------------------------------------------------------------------- */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.55s cubic-bezier(0.2, 0.75, 0.25, 1), transform 0.55s cubic-bezier(0.2, 0.75, 0.25, 1);
+  will-change: opacity, transform;
+}
+
+.reveal.is-revealed { opacity: 1; transform: none; }
+
+/* The root layout paints the first screen immediately: a page that starts
+   blank and fades in feels slower, not faster. */
+.reveal.is-first { opacity: 1; transform: none; }
+
+/* -----------------------------------------------------------------------------
+   8. Motion
+   -------------------------------------------------------------------------- */
+
+html { scroll-behavior: smooth; }
+
+.stack { animation: none; }
+
+::selection { background: var(--electric); color: #fff; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .reveal { opacity: 1; transform: none; transition: none; }
+  .rail::after { animation: none; }
+  .tab::after { transition: none; }
+}
+
+@media (max-width: 640px) {
+  .drawer-levels { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .page-head h1 { font-size: 34px; }
+  .sig-symbol { font-size: 34px; }
+  .brand > span:nth-child(2) { font-size: 20px; }
+  .tab { padding: 12px 12px 13px; }
+}

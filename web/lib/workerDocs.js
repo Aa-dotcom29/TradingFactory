@@ -323,7 +323,7 @@ export const WORKER_DOCS = {
     emits: [],
     consumers: [
       { who: 'Dashboard', via: 'getHealth (HealthTable, StatusBanner, RailStatus)', what: 'the health feed every page shows' },
-      { who: 'Agent Arcade', via: 'sources_health harness-supervisor', what: 'the W8 module status and lane totals on this board' },
+      { who: 'Agents Workspace', via: 'sources_health harness-supervisor', what: 'the W8 module status and lane totals on this board' },
       { who: 'All workers', via: 'queue housekeeping', what: 'keeps queue_messages bounded so cycles stay fast' },
     ],
     limits: [

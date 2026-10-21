@@ -1,5 +1,9 @@
 import { Rajdhani, JetBrains_Mono } from 'next/font/google';
+import { THEME_SCRIPT } from '@/lib/theme';
 import './globals.css';
+import './interface.css';
+import './textura.css';
+import './futurist.css';
 
 // Two families, two jobs. Rajdhani (a squared technical face) carries language:
 // headings, labels, prose. JetBrains Mono carries every number, ticker and
@@ -35,7 +39,16 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" className={`${rajdhani.variable} ${jetbrains.variable}`}>
+    // suppressHydrationWarning: the inline theme script sets data-theme on <html>
+    // before React hydrates, so the server's markup (no attribute) and the
+    // browser's DOM (attribute present) differ by design. This is the
+    // documented way to allow that one attribute.
+    <html lang="en" className={`${rajdhani.variable} ${jetbrains.variable}`} suppressHydrationWarning>
+      <head>
+        {/* Applies the saved theme, or the 18:00-06:00 IST night-watch palette,
+            before first paint so a dim preference never flashes bright. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body>{children}</body>
     </html>
   );

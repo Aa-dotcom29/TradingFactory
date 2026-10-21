@@ -1,4 +1,5 @@
 import { db, databaseConfigured } from './db.js';
+import { INDEX_SYMBOLS, timeframeRead } from './timeframe.js';
 
 // All read queries are defensive: a missing database or a transient error yields an
 // empty/zero result so the UI always renders a clear empty state.
@@ -901,6 +902,266 @@ export async function getSignalEvents(signalId, limit = 6) {
     `;
   } catch {
     return [];
+  }
+}
+
+// The evidence behind a published signal, read as of that signal's own
+// publication time. A later verdict must not be used to retroactively justify
+// an older plan, so each side query is a LATERAL join bounded by
+// `published_at`. Rows that never existed stay null and the UI labels them as
+// missing instead of borrowing the nearest number.
+export async function getSignalEvidence(signalIds = []) {
+  const ids = [...new Set((signalIds || []).filter((id) => typeof id === 'string' && id))];
+  const sql = db();
+  if (!sql || !ids.length) return {};
+  try {
+    const [signalRows, verdictRows, decisionRows, stageRows] = await Promise.all([
+      sql`
+        select id, symbol, horizon, published_at
+        from signals
+        where id = any(${ids}::uuid[])
+      `,
+      sql`
+        select s.id as signal_id,
+               b.direction, b.score, b.confidence, b.coverage, b.components,
+               b.evidence, b.as_of, b.config_version, b.engine_version
+        from signals s
+        left join lateral (
+          select direction, score, confidence, coverage, components, evidence,
+                 as_of, config_version, engine_version
+          from bias_verdicts b
+          where b.symbol = s.symbol
+            and b.horizon = s.horizon
+            and b.as_of <= s.published_at
+          order by b.as_of desc
+          limit 1
+        ) b on true
+        where s.id = any(${ids}::uuid[])
+      `,
+      sql`
+        select distinct on (s.id) s.id as signal_id, d.passed, d.decision, d.reasons,
+               d.evaluated_at, d.config_version
+        from signals s
+        left join signal_candidates c on c.dedupe_key = s.setup_key
+        join risk_decisions d on (d.candidate_id = c.id or d.signal_id = s.id)
+        where s.id = any(${ids}::uuid[])
+        order by s.id, d.evaluated_at desc
+      `,
+      sql`
+        select s.id as signal_id,
+               st.stage, st.direction, st.score, st.confidence, st.reasons, st.as_of
+        from signals s
+        left join lateral (
+          select stage, direction, score, confidence, reasons, as_of
+          from signal_stages st
+          where st.symbol = s.symbol
+            and st.horizon = s.horizon
+            and st.as_of <= s.published_at
+          order by st.as_of desc
+          limit 1
+        ) st on true
+        where s.id = any(${ids}::uuid[])
+      `,
+    ]);
+
+    const map = {};
+    for (const row of signalRows) {
+      map[row.id] = {
+        id: row.id,
+        symbol: row.symbol,
+        horizon: row.horizon,
+        publishedAt: row.published_at,
+        verdict: null,
+        risk: null,
+        stage: null,
+      };
+    }
+    for (const row of verdictRows) {
+      if (!map[row.signal_id] || !row.direction) continue;
+      map[row.signal_id].verdict = row;
+    }
+    for (const row of decisionRows) {
+      if (!map[row.signal_id]) continue;
+      map[row.signal_id].risk = row;
+    }
+    for (const row of stageRows) {
+      if (!map[row.signal_id] || !row.stage) continue;
+      map[row.signal_id].stage = row;
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Timeframe alignment
+// ---------------------------------------------------------------------------
+
+// The index quote stream, folded into 5-minute and 15-minute bars so a reader
+// can see whether the short-term structure agrees with the larger one. Only
+// the four index names are read: a single-stock 5-minute bar is noise, not
+// structure.
+//
+// The window is a full day so the most recent session is still covered after
+// the market closes; the read then carries the age of its newest print, and
+// the UI marks it stale rather than presenting it as live.
+export async function getIndexTimeframeBias(windowMinutes = 1440, now = Date.now()) {
+  const sql = db();
+  if (!sql) return {};
+  try {
+    const rows = await sql`
+      select symbol, captured_at as at, (payload->>'ltp')::numeric as ltp, provider
+      from market_snapshots
+      where kind = 'QUOTE'
+        and symbol = any(${INDEX_SYMBOLS}::text[])
+        and captured_at > now() - (${windowMinutes} || ' minutes')::interval
+      order by symbol, captured_at asc
+    `;
+
+    const bySymbol = new Map();
+    for (const row of rows) {
+      const key = String(row.symbol || '').toUpperCase();
+      if (!key) continue;
+      if (!bySymbol.has(key)) bySymbol.set(key, []);
+      bySymbol.get(key).push({ at: row.at, ltp: row.ltp, provider: row.provider });
+    }
+
+    const out = {};
+    for (const [symbol, quotes] of bySymbol) {
+      const read = timeframeRead(quotes, now);
+      const newest = quotes[quotes.length - 1];
+      out[symbol] = {
+        symbol,
+        provider: newest ? newest.provider : null,
+        ...read,
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Signal dossier
+// ---------------------------------------------------------------------------
+
+// Everything the dashboard can honestly say about one published signal: the
+// plan itself, the rows that existed when it was published, the rows that
+// exist now, and the trade the person entered (if any).
+//
+// The published-time rows are read with a LATERAL join bounded by
+// `published_at`, so a later verdict is never used to justify an older plan.
+// Where a row does not exist it stays null and the UI labels it missing.
+export async function getSignalDossier(signalId, userEmail = '') {
+  const sql = db();
+  if (!sql || !signalId) return null;
+  try {
+    const signalRows = await sql`
+      select s.id, s.horizon, s.strategy, s.symbol, s.direction, s.instrument, s.strike,
+             s.option_type, s.entry, s.target, s.stop, s.rr, s.probability, s.confidence,
+             s.published_at, s.strategy_version, s.engine_version, s.model_version,
+             s.config_version, s.setup_key, s.snapshot
+      from signals s
+      where s.id = ${signalId}::uuid
+      limit 1
+    `;
+    const signal = signalRows[0];
+    if (!signal) return null;
+
+    const [verdictRows, currentVerdictRows, decisionRows, stageRows, eventRows, featureRows, outcomeRows, tradeRows, candidateRows] = await Promise.all([
+      sql`
+        select direction, score, confidence, coverage, components, evidence, as_of,
+               config_version, engine_version, provenance
+        from bias_verdicts
+        where symbol = ${signal.symbol} and horizon = ${signal.horizon}
+          and as_of <= ${signal.published_at}
+        order by as_of desc
+        limit 1
+      `,
+      sql`
+        select direction, score, confidence, coverage, as_of, provenance
+        from bias_verdicts
+        where symbol = ${signal.symbol} and horizon = ${signal.horizon}
+        order by as_of desc
+        limit 1
+      `,
+      sql`
+        select d.passed, d.decision, d.reasons, d.evaluated_at, d.config_version, d.payload
+        from signal_candidates c
+        join risk_decisions d on d.candidate_id = c.id
+        where c.dedupe_key = ${signal.setup_key}
+        order by d.evaluated_at desc
+        limit 1
+      `,
+      sql`
+        select stage, direction, score, confidence, reasons, as_of, plan, plan_signature
+        from signal_stages
+        where symbol = ${signal.symbol} and horizon = ${signal.horizon}
+          and as_of <= ${signal.published_at}
+        order by as_of desc
+        limit 1
+      `,
+      sql`
+        select at, previous_state, new_state, reason
+        from signal_events
+        where signal_id = ${signal.id}::uuid
+        order by at desc
+        limit 20
+      `,
+      sql`
+        select distinct on (f.feature_set) f.feature_set, f.as_of, f.values
+        from features f
+        where f.symbol = ${signal.symbol}
+          and f.as_of <= ${signal.published_at}
+          and f.feature_set in ('flow.v1', 'news.entity.v1', 'quote.v1', 'option.quote.v1')
+        order by f.feature_set, f.as_of desc
+      `,
+      sql`
+        select evaluated_at, result, entry, exit, pnl_pct, mfe, mae, bars_held, payload
+        from outcomes
+        where signal_id = ${signal.id}::uuid
+        order by evaluated_at desc
+        limit 5
+      `,
+      userEmail
+        ? sql`
+          select id, status, outcome, entered_at, entry_price, quantity, outcome_at, outcome_note
+          from trade_entries
+          where signal_id = ${signal.id}::uuid and user_email = ${userEmail}
+          limit 1
+        `
+        : sql`select null::uuid as id where false`,
+      sql`
+        select id, status, kind, direction, entry, target, stop, rr, confidence, score,
+               liquidity_ok, reasons, setup, created_at, as_of
+        from signal_candidates
+        where dedupe_key = ${signal.setup_key}
+        order by as_of desc
+        limit 1
+      `,
+    ]);
+
+    const features = {};
+    for (const row of featureRows) {
+      if (!features[row.feature_set]) features[row.feature_set] = row;
+    }
+
+    return {
+      signal,
+      verdict: verdictRows[0] || null,
+      currentVerdict: currentVerdictRows[0] || null,
+      risk: decisionRows[0] || null,
+      stage: stageRows[0] || null,
+      candidate: candidateRows[0] || null,
+      events: eventRows,
+      features,
+      outcomes: outcomeRows,
+      trade: tradeRows[0] || null,
+    };
+  } catch {
+    return null;
   }
 }
 

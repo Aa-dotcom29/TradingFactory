@@ -1,4 +1,4 @@
-// The Agent Arcade: every harness worker as one node on a single board.
+// The Agents Workspace: every harness worker as one node on a single board.
 //
 // The mapping below is the real contract between the UI and the harness - each
 // worker owns a specific set of `sources_health` rows (see harness/src/workers).

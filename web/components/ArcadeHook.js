@@ -1,6 +1,9 @@
-// Compact hook from the Overview into the full Agent Arcade board. It keeps
+// Compact hook from the Overview into the full Agents Workspace board. It keeps
 // the summary to a glance: lane totals, one line of truth about the harness,
 // and a single link. The full board lives on /dashboard/arcade.
+//
+// It sits at the foot of the Overview: the board is a separate destination, so
+// it should not push the market read down the page.
 
 import Link from 'next/link';
 import { buildArcadeWorkers, arcadeTotals } from '@/lib/arcade';
@@ -17,10 +20,10 @@ export default function ArcadeHook({ sources = [] }) {
   const unreported = workers.filter((w) => w.status === 'UNREPORTED').length;
 
   return (
-    <section className="card arcade-hook" aria-label="Agent Arcade summary">
+    <section className="card arcade-hook" aria-label="Agents Workspace summary">
       <div className="arcade-head" style={{ marginBottom: 0 }}>
         <div style={{ flex: 1, minWidth: 240 }}>
-          <h2>Agent Arcade</h2>
+          <h2>Agents Workspace</h2>
           <p className="hint" style={{ margin: '5px 0 0' }}>
             The whole harness on one board: all 10 workers, their run order, and one
             continuous wave that shows the system is alive. {headline}
@@ -29,7 +32,7 @@ export default function ArcadeHook({ sources = [] }) {
         </div>
         <div className="arcade-totals">
           <span className={`pill ${tone}`}>{totals.up}/{workers.length} up</span>
-          <Link className="arcade-link" href="/dashboard/arcade">Open board &rarr;</Link>
+          <Link className="arcade-link" href="/dashboard/arcade">Open workspace &rarr;</Link>
         </div>
       </div>
     </section>
