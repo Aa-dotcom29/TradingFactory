@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { timeAgo } from '@/lib/format';
+import RelativeTime from '@/components/RelativeTime';
 
 // The news bulletin: a broadcast crawl under the rail.
 //
@@ -33,7 +33,7 @@ function Item({ item }) {
   const flagged = SEVERITIES.includes(severity);
   return (
     <span className="bulletin-item">
-      <span className="bulletin-time">{timeAgo(item.published_at)}</span>
+      <RelativeTime at={item.published_at} className="bulletin-time" />
       {flagged ? <span className={`bulletin-sev ${severity}`}>{severity}</span> : null}
       {item.url ? (
         <a href={item.url} target="_blank" rel="noreferrer noopener">

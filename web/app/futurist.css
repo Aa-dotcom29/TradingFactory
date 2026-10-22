@@ -592,8 +592,50 @@ select,
 
 .brand-mark svg { display: block; }
 
+/* The plan distance and the "bias now" line are what a trader checks before
+   acting: how far the plan has to travel, and whether the call that produced
+   it still holds. */
+.sig-plan {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--hair-ink);
+  border-radius: var(--radius-inset);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.sig-plan-item { font-size: 14px; }
+.sig-plan-item.up { color: var(--up); }
+.sig-plan-item.down { color: var(--down); }
+.sig-plan-item strong { font-size: 17px; font-weight: 700; }
+
+.sig-now { margin-left: 4px; }
+
+/* The alignment chart: two bars from a common centre line, one per
+   timeframe. Same direction, same colour, and the read is ALIGNED. */
+.tf-chart { display: block; width: 100%; max-width: 300px; height: auto; margin: 6px 0 2px; }
+.tf-chart-mid { stroke: var(--hair-ink-hi); stroke-width: 1; }
+.tf-chart-axis { stroke: var(--rule-hi); stroke-width: 1; }
+.tf-chart-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  fill: var(--ink-faint);
+  letter-spacing: 0.06em;
+}
+.tf-chart-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  fill: var(--ink-dim);
+}
+.tf-chart-bar { fill: var(--ink-faint); }
+.tf-chart-bar.up { fill: var(--up); }
+.tf-chart-bar.down { fill: var(--down); }
+
 /* -----------------------------------------------------------------------------
-   11. Motion is opt-out
+   12. Motion is opt-out
    -------------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {

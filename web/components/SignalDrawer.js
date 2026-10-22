@@ -84,7 +84,7 @@ function ComponentBreakdown({ components }) {
 }
 
 export default function SignalDrawer({ signalId, open, onClose, onTradeEntered }) {
-  const [state, setState] = useState({ status: 'idle', dossier: null, timeframes: null });
+  const [state, setState] = useState({ status: 'idle', dossier: null, timeframes: null, riskContext: null });
 
   useEffect(() => {
     if (!open || !signalId) return undefined;
@@ -98,10 +98,15 @@ export default function SignalDrawer({ signalId, open, onClose, onTradeEntered }
       })
       .then((data) => {
         if (cancelled) return;
-        setState({ status: 'ready', dossier: data.dossier, timeframes: data.timeframes || null });
+        setState({
+          status: 'ready',
+          dossier: data.dossier,
+          timeframes: data.timeframes || null,
+          riskContext: data.riskContext || null,
+        });
       })
       .catch(() => {
-        if (!cancelled) setState({ status: 'error', dossier: null, timeframes: null });
+        if (!cancelled) setState({ status: 'error', dossier: null, timeframes: null, riskContext: null });
       });
 
     return () => { cancelled = true; };
@@ -122,8 +127,14 @@ export default function SignalDrawer({ signalId, open, onClose, onTradeEntered }
 
   if (!open) return null;
 
-  const { status, dossier, timeframes } = state;
+  const { status, dossier, timeframes, riskContext } = state;
   const signal = dossier && dossier.signal;
+  const quote = dossier && dossier.quote;
+  const entry = signal && signal.entry != null ? Number(signal.entry) : null;
+  const last = quote && quote.ltp != null ? Number(quote.ltp) : null;
+  const livePnlPct = entry != null && last != null && entry !== 0
+    ? ((last - entry) / entry) * 100
+    : null;
 
   return (
     <div className="drawer-backdrop" onMouseDown={onClose} role="presentation">
@@ -238,6 +249,92 @@ export default function SignalDrawer({ signalId, open, onClose, onTradeEntered }
                     No bias verdict exists at or before this signal&apos;s publication time. The
                     verdict that fed the builder cannot be shown, and no later one is used in its place.
                   </p>
+                )}
+              </Section>
+
+              <Section
+                title="Where price is now"
+                note="The last stored quote for the underlying, against the plan that was published."
+              >
+                {quote && quote.ltp != null ? (
+                  <>
+                    <div className="drawer-levels">
+                      <div className="stat">
+                        <div className="k">Last price</div>
+                        <div className="v mono">{num(Number(quote.ltp), 2)}</div>
+                      </div>
+                      <div className="stat">
+                        <div className="k">Entry</div>
+                        <div className="v mono">{entry == null ? '-' : num(entry, 2)}</div>
+                      </div>
+                      <div className="stat">
+                        <div className="k">Against entry</div>
+                        <div className={`v mono ${livePnlPct == null ? '' : livePnlPct >= 0 ? ' tone-up' : ' tone-down'}`}>
+                          {livePnlPct == null ? '-' : `${livePnlPct >= 0 ? '+' : ''}${num(livePnlPct, 2)}%`}
+                        </div>
+                      </div>
+                      <div className="stat">
+                        <div className="k">Target</div>
+                        <div className="v mono">{signal.target == null ? '-' : num(Number(signal.target), 2)}</div>
+                      </div>
+                      <div className="stat">
+                        <div className="k">Stop</div>
+                        <div className="v mono">{signal.stop == null ? '-' : num(Number(signal.stop), 2)}</div>
+                      </div>
+                    </div>
+                    <p className="small muted" style={{ margin: '6px 0 0' }}>
+                      {quote.provider ? `Source: ${quote.provider}. ` : ''}
+                      {quote.captured_at ? `Captured ${istStamp(quote.captured_at)} IST.` : ''}
+                      {livePnlPct == null ? ' No price yet, so the plan cannot be marked.' : ''}
+                    </p>
+                  </>
+                ) : (
+                  <p className="small muted">
+                    No stored quote for {signal ? signal.symbol : 'this symbol'} yet, so the plan
+                    cannot be marked against a price.
+                  </p>
+                )}
+              </Section>
+
+              <Section
+                title="Household risk context"
+                note="The state the gate read when it approved this. It is why the approval was safe."
+              >
+                {riskContext ? (
+                  <div className="drawer-levels">
+                    <div className="stat">
+                      <div className="k">Open now</div>
+                      <div className="v mono">{riskContext.openPositions}</div>
+                    </div>
+                    <div className="stat">
+                      <div className="k">Closed 24h</div>
+                      <div className="v mono">{riskContext.closed24h}</div>
+                    </div>
+                    <div className="stat">
+                      <div className="k">P&amp;L 24h</div>
+                      <div className={`v mono ${riskContext.pnl24h > 0 ? ' tone-up' : riskContext.pnl24h < 0 ? ' tone-down' : ''}`}>
+                        {riskContext.pnl24h > 0 ? '+' : ''}{num(riskContext.pnl24h, 2)}%
+                      </div>
+                    </div>
+                    <div className="stat">
+                      <div className="k">Loss streak</div>
+                      <div className={`v mono ${riskContext.lossStreak > 0 ? ' tone-warn' : ''}`}>
+                        {riskContext.lossStreak}
+                      </div>
+                    </div>
+                    <div className="stat">
+                      <div className="k">Win rate</div>
+                      <div className="v mono">
+                        {riskContext.winRatePct == null ? '-' : `${riskContext.winRatePct}%`}
+                      </div>
+                    </div>
+                    <div className="stat">
+                      <div className="k">Settled total</div>
+                      <div className="v mono">{riskContext.totalClosed}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="small muted">The risk context could not be read.</p>
                 )}
               </Section>
 

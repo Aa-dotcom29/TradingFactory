@@ -915,7 +915,7 @@ export async function getSignalEvidence(signalIds = []) {
   const sql = db();
   if (!sql || !ids.length) return {};
   try {
-    const [signalRows, verdictRows, decisionRows, stageRows] = await Promise.all([
+    const [signalRows, verdictRows, currentVerdictRows, decisionRows, stageRows] = await Promise.all([
       sql`
         select id, symbol, horizon, published_at
         from signals
@@ -933,6 +933,21 @@ export async function getSignalEvidence(signalIds = []) {
           where b.symbol = s.symbol
             and b.horizon = s.horizon
             and b.as_of <= s.published_at
+          order by b.as_of desc
+          limit 1
+        ) b on true
+        where s.id = any(${ids}::uuid[])
+      `,
+      // The verdict as it stands now, so a reader can see whether the call that
+      // produced this signal still holds or has since been contradicted.
+      sql`
+        select s.id as signal_id,
+               b.direction, b.score, b.confidence, b.as_of
+        from signals s
+        left join lateral (
+          select direction, score, confidence, as_of
+          from bias_verdicts b
+          where b.symbol = s.symbol and b.horizon = s.horizon
           order by b.as_of desc
           limit 1
         ) b on true
@@ -972,6 +987,7 @@ export async function getSignalEvidence(signalIds = []) {
         horizon: row.horizon,
         publishedAt: row.published_at,
         verdict: null,
+        currentVerdict: null,
         risk: null,
         stage: null,
       };
@@ -979,6 +995,10 @@ export async function getSignalEvidence(signalIds = []) {
     for (const row of verdictRows) {
       if (!map[row.signal_id] || !row.direction) continue;
       map[row.signal_id].verdict = row;
+    }
+    for (const row of currentVerdictRows) {
+      if (!map[row.signal_id] || !row.direction) continue;
+      map[row.signal_id].currentVerdict = row;
     }
     for (const row of decisionRows) {
       if (!map[row.signal_id]) continue;
@@ -1070,7 +1090,7 @@ export async function getSignalDossier(signalId, userEmail = '') {
     const signal = signalRows[0];
     if (!signal) return null;
 
-    const [verdictRows, currentVerdictRows, decisionRows, stageRows, eventRows, featureRows, outcomeRows, tradeRows, candidateRows] = await Promise.all([
+    const [verdictRows, currentVerdictRows, decisionRows, stageRows, eventRows, featureRows, outcomeRows, tradeRows, candidateRows, quoteRows, flowRows] = await Promise.all([
       sql`
         select direction, score, confidence, coverage, components, evidence, as_of,
                config_version, engine_version, provenance
@@ -1141,6 +1161,25 @@ export async function getSignalDossier(signalId, userEmail = '') {
         order by as_of desc
         limit 1
       `,
+      // The latest quote for the underlying, so the reader can see where price
+      // is now against the plan they published.
+      sql`
+        select (payload->>'ltp')::numeric as ltp,
+               (payload->>'close')::numeric as prev_close,
+               captured_at, provider
+        from market_snapshots
+        where kind = 'QUOTE' and symbol = ${signal.symbol}
+        order by captured_at desc
+        limit 1
+      `,
+      // The current flow features, against the ones the verdict was built on.
+      sql`
+        select as_of, values
+        from features
+        where symbol = ${signal.symbol} and feature_set = 'flow.v1'
+        order by as_of desc
+        limit 1
+      `,
     ]);
 
     const features = {};
@@ -1158,6 +1197,8 @@ export async function getSignalDossier(signalId, userEmail = '') {
       events: eventRows,
       features,
       outcomes: outcomeRows,
+      quote: quoteRows[0] || null,
+      flowNow: flowRows[0] || null,
       trade: tradeRows[0] || null,
     };
   } catch {

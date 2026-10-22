@@ -255,26 +255,33 @@ main.wrap, header.rail, nav.tabs, .bulletin { position: relative; z-index: 1; }
 .drawer-title .muted { font-size: 19px; }
 
 /* The big instrument name on a signal card is the page's biggest number-free
-   object, so it takes the editorial face too. */
+   object, so it takes the editorial face and real size. */
 .sig-symbol {
   font-family: var(--font-editorial);
-  font-size: 44px;
+  font-size: 52px;
   font-weight: 400;
-  letter-spacing: -0.01em;
-  line-height: 1;
+  letter-spacing: -0.015em;
+  line-height: 0.98;
   text-shadow: none;
 }
 
 .sig-underlying {
   font-family: var(--font-editorial);
-  font-size: 23px;
+  font-size: 27px;
   font-weight: 400;
   color: var(--ink-dim);
 }
 
+.sig-expiry {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+}
+
 /* The strike stays monospaced: it is a number, and a number in a serif with
-   old-style figures is a misread waiting to happen. */
-.sig-strike { font-size: 27px; }
+   old-style figures is a misread waiting to happen. It is simply large. */
+.sig-strike { font-size: 34px; }
 
 /* -----------------------------------------------------------------------------
    4. Pill actions

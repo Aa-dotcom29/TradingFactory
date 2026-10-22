@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { getSignalDossier, getIndexTimeframeBias } from '@/lib/queries';
+import { getRiskContext } from '@/lib/risk-context';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,5 +22,9 @@ export async function GET(request, { params }) {
   const symbol = String(dossier.signal.symbol || '').toUpperCase();
   const timeframes = bias[symbol] || null;
 
-  return NextResponse.json({ dossier, timeframes, at: new Date().toISOString() });
+  // The household state the gate read: exposure, the day's cost, the loss
+  // streak. Without it, "every gate passed" is an assertion rather than a fact.
+  const riskContext = await getRiskContext();
+
+  return NextResponse.json({ dossier, timeframes, riskContext, at: new Date().toISOString() });
 }

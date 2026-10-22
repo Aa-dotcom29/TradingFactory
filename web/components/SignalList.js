@@ -3,12 +3,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   directionTone, num, pct, signed, scoreTone, istStamp, publishModeTone, signalStateTone,
-  riskConfigTone, tradeOutcomeTone, tradeStatusTone,
+  riskConfigTone, tradeOutcomeTone, tradeStatusTone, timeAgo,
 } from '@/lib/format';
 import TradeEnteredButton from '@/components/TradeEnteredButton';
 import SignalEvidence from '@/components/SignalEvidence';
 import SignalDrawer from '@/components/SignalDrawer';
 import { TimeframeBadge } from '@/components/TimeframeAlignment';
+import RelativeTime from '@/components/RelativeTime';
 import { isIndexSignal } from '@/lib/book';
 
 // The published-signal feed is a client component so the household can narrow a
@@ -158,6 +159,20 @@ function SignalCard({
   const verdict = evidence && evidence.verdict;
   const score = verdict && verdict.score != null ? Number(verdict.score) : null;
   const confidence = verdict && verdict.confidence != null ? Number(verdict.confidence) : null;
+  const currentVerdict = evidence && evidence.currentVerdict;
+  const currentDirection = currentVerdict && currentVerdict.direction
+    ? String(currentVerdict.direction).toUpperCase()
+    : null;
+
+  // How far the plan has to travel, expressed against the entry. A trader
+  // reads "target +2.1% / stop -0.7%" faster than two raw prices.
+  const entry = Number(signal.entry);
+  const targetPct = Number.isFinite(entry) && entry !== 0 && signal.target != null
+    ? ((Number(signal.target) - entry) / entry) * 100
+    : null;
+  const stopPct = Number.isFinite(entry) && entry !== 0 && signal.stop != null
+    ? ((Number(signal.stop) - entry) / entry) * 100
+    : null;
   const instrument = splitInstrument(signal.instrument, signal.symbol);
 
   return (
@@ -246,7 +261,39 @@ function SignalCard({
             <div className="v"><TimeframeBadge read={timeframes} /></div>
           </div>
         ) : null}
+        {currentDirection ? (
+          <div className="sig-confirm-item">
+            <div className="k" title="The bias verdict as it stands now, against the one that produced this signal">
+              Bias now
+            </div>
+            <div className="v">
+              <span className={`pill ${directionTone(currentDirection)}`}>{currentDirection}</span>
+              {currentVerdict && currentVerdict.as_of ? (
+                <RelativeTime className="small muted sig-now" at={currentVerdict.as_of} />
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </div>
+
+      {targetPct != null || stopPct != null ? (
+        <div className="sig-plan">
+          <span className="small muted">From entry:</span>
+          {targetPct != null ? (
+            <span className="sig-plan-item up">
+              target <strong className="mono">+{num(targetPct, 2)}%</strong>
+            </span>
+          ) : null}
+          {stopPct != null ? (
+            <span className="sig-plan-item down">
+              stop <strong className="mono">-{num(Math.abs(stopPct), 2)}%</strong>
+            </span>
+          ) : null}
+          <span className="small muted">
+            <RelativeTime at={signal.published_at} className="small muted" /> old
+          </span>
+        </div>
+      ) : null}
 
       <div className="stat-row sig-levels">
         <div className="stat">
