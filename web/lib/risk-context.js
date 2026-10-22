@@ -61,10 +61,16 @@ export async function getRiskContext() {
     // the book is down 30%, and it grows with the number of trades.
     const weight = Number(row.weight_24h || 0);
     const pnl = weight > 0 ? Number(row.weighted_24h || 0) / weight : 0;
+    // The same loss in money. A percentage of committed premium is not the
+    // number a household thinks in: a 30% loss on a 680 premium is 204.
+    const committed = Math.round(weight * 100) / 100;
+    const lossAmount = Math.round((Number(row.weighted_24h || 0) / 100) * 100) / 100;
     return {
       openPositions: Number(row.open_positions || 0),
       closed24h: Number(row.closed_24h || 0),
       pnl24h: Math.round(pnl * 100) / 100,
+      committed24h: committed,
+      lossAmount24h: lossAmount,
       totalClosed: total,
       winRatePct: total ? Math.round((Number(row.wins || 0) / total) * 1000) / 10 : null,
       lossStreak,

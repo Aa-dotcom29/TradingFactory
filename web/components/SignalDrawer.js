@@ -315,6 +315,11 @@ export default function SignalDrawer({ signalId, open, onClose, onTradeEntered }
                       <div className={`v mono ${riskContext.pnl24h > 0 ? ' tone-up' : riskContext.pnl24h < 0 ? ' tone-down' : ''}`}>
                         {riskContext.pnl24h > 0 ? '+' : ''}{num(riskContext.pnl24h, 2)}%
                       </div>
+                      {riskContext.lossAmount24h ? (
+                        <div className="tick">
+                          {num(Math.abs(riskContext.lossAmount24h), 0)} of {num(riskContext.committed24h, 0)}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="stat">
                       <div className="k">Loss streak</div>

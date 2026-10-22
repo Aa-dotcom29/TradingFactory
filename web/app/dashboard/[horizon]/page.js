@@ -8,6 +8,7 @@ import {
 import { getCurrentUser } from '@/lib/auth';
 import { horizonByKey } from '@/lib/horizons';
 import { publishModeFor } from '@/lib/publish';
+import { num } from '@/lib/format';
 import StatusBanner from '@/components/StatusBanner';
 import SignalList from '@/components/SignalList';
 import SignalStages from '@/components/SignalStages';
@@ -22,6 +23,7 @@ import NewsList from '@/components/NewsList';
 import Collapsible from '@/components/Collapsible';
 import TimeframeAlignment from '@/components/TimeframeAlignment';
 import { gateSilence } from '@/lib/gate';
+import { getRiskContext } from '@/lib/risk-context';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,6 +74,9 @@ export default async function HorizonPage({ params }) {
   const live = publishModeFor(horizon.key) === 'live';
   // Why the machine is quiet, if it is. The risk decisions already know.
   const silence = gateSilence(riskDecisions);
+  // The loss controls speak in percentages of committed premium; a household
+  // thinks in money, so the same figure is also given in rupees.
+  const riskContext = await getRiskContext();
 
   return (
     <div className="stack">
@@ -131,10 +136,20 @@ export default async function HorizonPage({ params }) {
               ? ` Also blocking: ${silence.also.map((item) => `${item.label} (${item.count})`).join(', ')}.`
               : ''}
           </span>
-          <span className="gate-note-foot">
-            Nothing is published while a gate holds. The loss controls are daily: they reset at
-            the next trading session.
-          </span>
+          {riskContext && riskContext.lossAmount24h ? (
+            <span className="gate-note-foot">
+              {`Today that is ${num(Math.abs(riskContext.lossAmount24h), 0)} of `}
+              {`${num(riskContext.committed24h, 0)} committed, across `}
+              {`${riskContext.closed24h} closed plan(s). `}
+              Nothing is published while a gate holds. The loss controls are daily: they
+              reset at the next trading session.
+            </span>
+          ) : (
+            <span className="gate-note-foot">
+              Nothing is published while a gate holds. The loss controls are daily: they
+              reset at the next trading session.
+            </span>
+          )}
         </div>
       ) : null}
 
