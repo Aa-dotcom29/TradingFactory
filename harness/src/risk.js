@@ -49,11 +49,19 @@ const DEFAULT_RISK_CONFIG = {
     liquidityRequired: true,
     maxOpenPositions: { INTRADAY: 5, SWING: 8, POSITIONAL: 10 },
     maxOpenPerSymbol: 1,
+    // The same name across different horizons is still the same money. A
+    // per-horizon cap cannot see that: one household, one account, one
+    // name at a time.
+    maxOpenPerSymbolAnyHorizon: 1,
     duplicateWindowMinutes: 30,
     maxCandidateAgeMinutes: { INTRADAY: 120, SWING: 2880, POSITIONAL: 10080 },
     dailyLossLimitPct: 3,
     consecutiveLossHalt: 3,
     cooldownAfterLossMinutes: 60,
+    // A loss only counts toward the halt and the cooldown when it was this big
+    // or bigger. A 0.4% stop is noise: counting it against a three-loss halt
+    // lets a run of trivial stops switch the whole system off for the day.
+    lossMaterialPct: 1,
     // How long a published signal is treated as an open position for the exposure gates. The
     // evaluator (W7) will close positions properly; until then this window is the ledger.
     holdingDays: { INTRADAY: 1, SWING: 30, POSITIONAL: 180 },
@@ -104,6 +112,7 @@ function summariseExposure(signals, config, now = Date.now()) {
   const gates = (config && config.gates) || DEFAULT_RISK_CONFIG.gates;
   const byHorizon = {};
   const bySymbol = {};
+  const bySymbolAnyHorizon = {};
   const lastPublished = {};
   for (const signal of Array.isArray(signals) ? signals : []) {
     const horizon = String((signal && signal.horizon) || '');
@@ -114,11 +123,12 @@ function summariseExposure(signals, config, now = Date.now()) {
     if (now - at > holdingMs) continue;
     byHorizon[horizon] = (byHorizon[horizon] || 0) + 1;
     bySymbol[`${horizon}|${symbol}`] = (bySymbol[`${horizon}|${symbol}`] || 0) + 1;
+    bySymbolAnyHorizon[symbol] = (bySymbolAnyHorizon[symbol] || 0) + 1;
     const dupKey = `${horizon}|${symbol}|${String((signal && signal.direction) || '').toUpperCase()}`;
     const prior = lastPublished[dupKey] ? new Date(lastPublished[dupKey]).getTime() : 0;
     if (at > prior) lastPublished[dupKey] = new Date(at).toISOString();
   }
-  return { byHorizon, bySymbol, lastPublished };
+  return { byHorizon, bySymbol, bySymbolAnyHorizon, lastPublished };
 }
 
 // Consecutive losses counting back from the most recent closed trade. A null result means
@@ -128,7 +138,46 @@ const LOSS_RESULTS = ['LOSS', 'STOPPED_OUT', 'STOP_HIT', 'FAILED'];
 // so it must not be read as a break in a real losing streak - it is skipped, not counted.
 const NEUTRAL_RESULTS = ['NO_PRICE_SOURCE'];
 
-function lossStreak(outcomes) {
+// A loss counts toward the halt and the cooldown only when it was material.
+// A 0.4% stop is noise, and a run of noise must not be able to switch the
+// system off for a whole trading day.
+function isMaterialLoss(pnl, threshold) {
+  if (pnl === null || pnl === undefined) return false;
+  const limit = Math.abs(Number(threshold) || 0);
+  if (limit <= 0) return pnl < 0;
+  return pnl <= -limit;
+}
+
+// The day's portfolio return, weighted by the capital at risk in each closed
+// trade.
+//
+// Summing per-trade percentages is a units error, and a dangerous one. Three
+// trades that each lost 1% is a 1% day, not a 3% day, but the raw sum of a
+// dozen outcomes can read -90% while the book is barely down - and a gate that
+// believes -90% refuses every candidate for the rest of the session over a
+// number that was never a return.
+//
+// The capital weight is the entry price of each closed plan: the premium or
+// share price actually at risk on it. Quantity is not stored on the outcome
+// row, so this approximates the true capital base - but it is the same order
+// of magnitude as a sum of percentages and, unlike the sum, it does not
+// explode with the number of trades.
+function weightedDailyReturn(rows) {
+  let weighted = 0;
+  let weight = 0;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const pnl = num(row && row.pnl_pct);
+    if (pnl === null) continue;
+    const entry = num(row && row.entry);
+    const w = entry === null || entry === 0 ? 1 : Math.abs(entry);
+    weighted += pnl * w;
+    weight += w;
+  }
+  if (weight <= 0) return null;
+  return round(weighted / weight, 2);
+}
+
+function lossStreak(outcomes, materialPct = 0) {
   const rows = Array.isArray(outcomes) ? outcomes : [];
   if (!rows.length) return null;
   let streak = 0;
@@ -142,17 +191,33 @@ function lossStreak(outcomes) {
       ? pnl < 0
       : LOSS_RESULTS.some((token) => result.includes(token));
     if (!isLoss) break;
+    if (materialPct > 0 && !isMaterialLoss(pnl, materialPct)) break;
     streak += 1;
   }
   return sawVerdict ? streak : null;
 }
 
-function summariseOutcomes(rows, todayPnlPct = null, lastLossAt = null, todayCount = 0) {
+function summariseOutcomes(rows, todayPnlPct = null, lastLossAt = null, todayCount = 0, materialPct = 0) {
+  const list = Array.isArray(rows) ? rows : [];
+  let lastMaterialLossAt = null;
+  for (const row of list) {
+    const pnl = num(row && row.pnl_pct);
+    const result = String((row && row.result) || '').toUpperCase();
+    if (pnl === null && NEUTRAL_RESULTS.some((token) => result.includes(token))) continue;
+    const isLoss = pnl !== null
+      ? pnl < 0
+      : LOSS_RESULTS.some((token) => result.includes(token));
+    if (isLoss && isMaterialLoss(pnl, materialPct)) {
+      lastMaterialLossAt = row.evaluated_at || null;
+      break;
+    }
+  }
   return {
-    consecutiveLosses: lossStreak(rows),
-    recent: Array.isArray(rows) ? rows.length : 0,
+    consecutiveLosses: lossStreak(list, materialPct),
+    recent: list.length,
     dailyPnlPct: todayCount > 0 ? num(todayPnlPct) : null,
     lastLossAt: lastLossAt || null,
+    lastMaterialLossAt: lastMaterialLossAt || null,
   };
 }
 
@@ -272,6 +337,17 @@ function evaluateRisk({ candidate, context = {}, config, now = Date.now() }) {
     add('symbolExposure', 'PASS', `${symbol} has ${symbolOpen} open ${horizon} position(s)`, { symbolOpen });
   }
 
+  // The same name held in another horizon is the same money. Without this,
+  // one contract can be taken once per horizon and the loss controls then
+  // count three separate bets where the household only ever made one.
+  const symbolOpenAny = num((exposure.bySymbolAnyHorizon || {})[symbol]) || 0;
+  const maxAnyPerSymbol = num(gates.maxOpenPerSymbolAnyHorizon);
+  if (maxAnyPerSymbol !== null && symbolOpenAny >= maxAnyPerSymbol) {
+    add('symbolExposureAnyHorizon', 'FAIL', `${symbol} already has ${symbolOpenAny} open position(s) across all horizons`);
+  } else {
+    add('symbolExposureAnyHorizon', 'PASS', `${symbol} has ${symbolOpenAny} open position(s) across all horizons`, { symbolOpenAny });
+  }
+
   // 8. Duplicate suppression: a fresh proposal for a name we just published is noise.
   const lastAt = (exposure.lastPublished || {})[`${horizon}|${symbol}|${direction}`];
   if (!lastAt) {
@@ -299,11 +375,14 @@ function evaluateRisk({ candidate, context = {}, config, now = Date.now() }) {
   if (!outcomes.lastLossAt) {
     add('cooldownAfterLoss', 'SKIPPED', 'no recorded loss to cool down from');
   } else {
-    const minutes = Math.max(0, Math.round((now - new Date(outcomes.lastLossAt).getTime()) / 60000));
+    // The cooldown follows a MATERIAL loss. A 0.4% stop is not a reason to
+    // stop trading for an hour.
+    const lastLoss = outcomes.lastMaterialLossAt || outcomes.lastLossAt;
+    const minutes = Math.max(0, Math.round((now - new Date(lastLoss).getTime()) / 60000));
     if (minutes < gates.cooldownAfterLossMinutes) {
-      add('cooldownAfterLoss', 'FAIL', `the last loss was ${minutes} min ago; cooling down for ${gates.cooldownAfterLossMinutes} min`);
+      add('cooldownAfterLoss', 'FAIL', `the last material loss was ${minutes} min ago; cooling down for ${gates.cooldownAfterLossMinutes} min`);
     } else {
-      add('cooldownAfterLoss', 'PASS', `the last loss was ${minutes} min ago`);
+      add('cooldownAfterLoss', 'PASS', `the last material loss was ${minutes} min ago`);
     }
   }
 
@@ -345,6 +424,8 @@ function evaluateRisk({ candidate, context = {}, config, now = Date.now() }) {
 }
 
 module.exports = {
+  isMaterialLoss,
+  weightedDailyReturn,
   CHECK_STATES,
   DECISIONS,
   DEFAULT_RISK_CONFIG,

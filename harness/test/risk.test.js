@@ -13,6 +13,7 @@ const {
   summariseExposure,
   summariseOutcomes,
   lossStreak,
+  weightedDailyReturn,
   evaluateRisk,
 } = require('../src/risk');
 
@@ -409,4 +410,51 @@ test('every check carries a known status and a detail line', () => {
     assert.equal(typeof check.detail, 'string');
     assert.equal(check.detail.length > 0, true);
   }
+});
+
+test('a loss only counts toward the halt when it was material', () => {
+  // A run of trivial stops must not be able to switch the system off for the
+  // day, and a genuine run of real losses must still halt it.
+  const trivial = [{ pnl_pct: -0.4 }, { pnl_pct: -0.4 }, { pnl_pct: -0.4 }];
+  assert.equal(lossStreak(trivial, 1), 0);
+  const real = [{ pnl_pct: -30 }, { pnl_pct: -35 }, { pnl_pct: -25 }];
+  assert.equal(lossStreak(real, 1), 3);
+  // With no threshold the behaviour is unchanged: every loss counts.
+  assert.equal(lossStreak(trivial, 0), 3);
+});
+
+test('a position that never had a price is not a loss in the streak', () => {
+  const rows = [{ pnl_pct: null, result: 'NO_PRICE_SOURCE' }, { pnl_pct: -12 }];
+  assert.equal(lossStreak(rows, 1), 1);
+});
+
+test('the daily return is weighted by capital, not a sum of percentages', () => {
+  // Three 1% losses are a 1% day, not a 3% day. The old raw sum would have
+  // read -3% and tripped a 3% limit on its own.
+  const rows = [
+    { pnl_pct: -1, entry: 1000 },
+    { pnl_pct: -1, entry: 1000 },
+    { pnl_pct: -1, entry: 1000 },
+  ];
+  assert.equal(weightedDailyReturn(rows), -1);
+  // A big loss on a big position dominates a small loss on a small one.
+  const mixed = [
+    { pnl_pct: -30, entry: 10000 },
+    { pnl_pct: -1, entry: 100 },
+  ];
+  assert.equal(weightedDailyReturn(mixed), -29.71);
+  // Nothing priced means nothing to report.
+  assert.equal(weightedDailyReturn([]), null);
+  assert.equal(weightedDailyReturn([{ pnl_pct: null, entry: 100 }]), null);
+});
+
+test('the same name in another horizon is the same money', () => {
+  const rows = [
+    { horizon: 'INTRADAY', symbol: 'BANKNIFTY', published_at: '2026-10-21T04:11:09Z' },
+    { horizon: 'SWING', symbol: 'BANKNIFTY', published_at: '2026-10-21T04:11:09Z' },
+    { horizon: 'POSITIONAL', symbol: 'BANKNIFTY', published_at: '2026-10-21T04:11:09Z' },
+  ];
+  const exposure = summariseExposure(rows, config, Date.parse('2026-10-21T06:00:00Z'));
+  assert.equal(exposure.bySymbolAnyHorizon.BANKNIFTY, 3);
+  assert.equal(exposure.bySymbol['INTRADAY|BANKNIFTY'], 1);
 });

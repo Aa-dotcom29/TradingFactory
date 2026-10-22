@@ -139,24 +139,33 @@ class RiskWorker {
         from active_signals
         where published_at > now() - interval '180 days'
       `,
+      // The loss streak is a DAILY control. Counting it across all history
+      // meant one bad afternoon switched the system off for good, with no
+      // way back except a win it was not allowed to take. Scoped to the
+      // trading day, a bad day stands the system down until the next one.
       sql`
         select result, pnl_pct, evaluated_at
         from outcomes
+        where evaluated_at >= ${istDayStart(now)}::timestamptz
         order by evaluated_at desc
-        limit 10
+        limit 30
       `,
       // The daily-loss window is the Indian trading day, not the UTC day: a UTC boundary lands at
       // 05:30 IST, mid-morning, which would both forget an overnight loss and split one trading day
       // across two buckets.
       sql`
-        select count(*)::int as n, coalesce(sum(pnl_pct), 0) as pnl
+        select count(*)::int as n,
+               coalesce(sum(pnl_pct), 0) as pnl,
+               coalesce(sum(pnl_pct * abs(coalesce((payload->>'entry')::numeric, 1))), 0) as weighted,
+               coalesce(sum(abs(coalesce((payload->>'entry')::numeric, 1))), 0) as weight
         from outcomes
         where evaluated_at >= ${istDayStart(now)}::timestamptz
       `,
+      // Only a MATERIAL loss starts a cooldown.
       sql`
         select max(evaluated_at) as last_loss_at
         from outcomes
-        where coalesce(pnl_pct, 0) < 0
+        where pnl_pct <= ${-Math.abs(Number(riskConfig.gates.lossMaterialPct || 0))}
       `,
     ]);
 
@@ -164,9 +173,14 @@ class RiskWorker {
       exposure: summariseExposure(signals, riskConfig, now),
       outcomes: summariseOutcomes(
         recentOutcomes,
-        todayRows.length ? todayRows[0].pnl : null,
+        // The day's return is weighted by the capital at risk in each closed
+        // plan, not a raw sum of per-trade percentages.
+        todayRows.length && Number(todayRows[0].weight) > 0
+          ? Number(todayRows[0].weighted) / Number(todayRows[0].weight)
+          : null,
         lastLoss.length ? lastLoss[0].last_loss_at : null,
         todayRows.length ? todayRows[0].n : 0,
+        Number(riskConfig.gates.lossMaterialPct || 0),
       ),
     };
   }

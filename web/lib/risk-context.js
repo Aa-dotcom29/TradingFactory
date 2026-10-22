@@ -28,8 +28,10 @@ export async function getRiskContext() {
         (select count(*)::int from active_signals) as open_positions,
         (select count(*)::int from outcomes
           where evaluated_at > now() - interval '1 day') as closed_24h,
-        (select coalesce(sum(pnl_pct), 0)::numeric from outcomes
-          where evaluated_at > now() - interval '1 day') as pnl_24h,
+        (select coalesce(sum(pnl_pct * abs(coalesce((payload->>'entry')::numeric, 1))), 0)::numeric
+          from outcomes where evaluated_at > now() - interval '1 day') as weighted_24h,
+        (select coalesce(sum(abs(coalesce((payload->>'entry')::numeric, 1))), 0)::numeric
+          from outcomes where evaluated_at > now() - interval '1 day') as weight_24h,
         (select count(*)::int from outcomes where pnl_pct is not null) as total_closed,
         (select count(*)::int from outcomes where pnl_pct > 0) as wins
     `;
@@ -44,14 +46,21 @@ export async function getRiskContext() {
       order by evaluated_at desc
       limit 20
     `;
+    // Only a MATERIAL loss counts toward the streak: a 0.4% stop is noise and
+    // must not be able to switch the household off.
+    const material = 1;
     let lossStreak = 0;
     for (const outcome of recent) {
-      if (Number(outcome.pnl_pct) < 0) lossStreak += 1;
+      if (Number(outcome.pnl_pct) <= -material) lossStreak += 1;
       else break;
     }
 
     const total = Number(row.total_closed || 0);
-    const pnl = Number(row.pnl_24h || 0);
+    // The day's return is weighted by the capital at risk in each closed plan.
+    // A raw sum of per-trade percentages is not a return: it reads -90% on a day
+    // the book is down 30%, and it grows with the number of trades.
+    const weight = Number(row.weight_24h || 0);
+    const pnl = weight > 0 ? Number(row.weighted_24h || 0) / weight : 0;
     return {
       openPositions: Number(row.open_positions || 0),
       closed24h: Number(row.closed_24h || 0),

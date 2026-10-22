@@ -21,6 +21,7 @@ import BiasPanel from '@/components/BiasPanel';
 import NewsList from '@/components/NewsList';
 import Collapsible from '@/components/Collapsible';
 import TimeframeAlignment from '@/components/TimeframeAlignment';
+import { gateSilence } from '@/lib/gate';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,6 +70,8 @@ export default async function HorizonPage({ params }) {
   const tradesBySignal = await getTradesForSignals(signals.map((signal) => signal.id), email);
   const evidenceBySignal = await getSignalEvidence(signals.map((signal) => signal.id));
   const live = publishModeFor(horizon.key) === 'live';
+  // Why the machine is quiet, if it is. The risk decisions already know.
+  const silence = gateSilence(riskDecisions);
 
   return (
     <div className="stack">
@@ -111,6 +114,29 @@ export default async function HorizonPage({ params }) {
             : 'Delivery is in shadow, so nothing is being sent yet - the ledger is still written in full.')
         }
       />
+
+      {/* If the machine is quiet, say why. A blank list with no explanation is
+          indistinguishable from a broken one, and the reader is left guessing
+          whether the market offered nothing or the risk gate stood the system
+          down. */}
+      {silence ? (
+        <div className="gate-note" role="status">
+          <span className="gate-note-head">
+            Risk gate is holding {silence.count} of the last {silence.of} candidates
+          </span>
+          <span className="gate-note-body">
+            <strong>{silence.label}</strong>
+            {silence.detail ? ` - ${silence.detail}` : ''}
+            {silence.also.length
+              ? ` Also blocking: ${silence.also.map((item) => `${item.label} (${item.count})`).join(', ')}.`
+              : ''}
+          </span>
+          <span className="gate-note-foot">
+            Nothing is published while a gate holds. The loss controls are daily: they reset at
+            the next trading session.
+          </span>
+        </div>
+      ) : null}
 
       {/* Published signals come first: this is the panel a trader acts on, so it
           should not be buried under the diagnostic panels that explain it. */}
